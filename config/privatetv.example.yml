@@ -6,6 +6,8 @@ server:
 channel:
   id: "privatetv"
   name: "PrivateTV"
+  # Leave empty to use the built-in PrivateTV logo served by the PrivateTV HTTP service.
+  # Leave empty to use the built-in Hazard TV logo served by the PrivateTV HTTP service.
   icon: ""
   group_title: "Local"
   language: "de"

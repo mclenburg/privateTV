@@ -5,23 +5,33 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import timedelta
 from http import HTTPStatus
+from importlib import resources
+from pathlib import Path
 
 from aiohttp import web
 
 from privatetv.config import AppSettings
 from privatetv.db import MediaRepository, ScheduleRepository, connect_database, initialize_database
-from privatetv.domain.errors import NoCurrentProgrammeError, PrivateTvError, StreamLimitExceededError
+from privatetv.domain.errors import NoCurrentProgrammeError, StreamLimitExceededError
 from privatetv.domain.models import CurrentProgramme, MediaAsset, ScanStatus, SourceKind
 from privatetv.hazard import HazardRandomStreamProvider, HazardSelectionError
+from privatetv.http.keys import (
+    CONFIG_PATH_KEY,
+    HAZARD_PROVIDER_KEY,
+    SETTINGS_KEY,
+    STREAM_PROVIDER_KEY,
+    STREAM_STATE_KEY,
+)
 from privatetv.schedule import ScheduleMaintainer, resolve_current_programme
 from privatetv.streaming import PerClientFfmpegStreamProvider, StreamProvider
-from privatetv.web.config_ui import add_media_directory, browse_directories, save_config, show_config
-from privatetv.http.keys import CONFIG_PATH_KEY, HAZARD_PROVIDER_KEY, SETTINGS_KEY, STREAM_PROVIDER_KEY, STREAM_STATE_KEY
 from privatetv.streaming.ffmpeg import StreamPreparationError
 from privatetv.tvh import render_empty_xmltv, render_m3u, render_xmltv
 from privatetv.util.time import now_in_zone
+from privatetv.web.config_ui import add_media_directory, browse_directories, save_config, show_config
 
 LOGGER = logging.getLogger(__name__)
+
+
 @dataclass(slots=True)
 class StreamState:
     """Runtime HTTP stream state shared by all PrivateTV channels."""
@@ -48,8 +58,6 @@ class StreamState:
         semaphore.release()
 
 
-
-
 def create_app(
     settings: AppSettings,
     stream_provider: StreamProvider | None = None,
@@ -61,8 +69,6 @@ def create_app(
     provider = stream_provider or PerClientFfmpegStreamProvider(settings)
     app[SETTINGS_KEY] = settings
     if config_path is not None:
-        from pathlib import Path
-
         app[CONFIG_PATH_KEY] = Path(config_path)
     app[STREAM_STATE_KEY] = StreamState(settings.streaming.max_parallel_streams)
     app[STREAM_PROVIDER_KEY] = provider
@@ -72,6 +78,8 @@ def create_app(
     app.router.add_get("/health", health)
     app.router.add_get("/playlist.m3u", playlist)
     app.router.add_get("/xmltv.xml", xmltv)
+    app.router.add_get("/logos/privatetv.png", privatetv_logo)
+    app.router.add_get("/logos/hazardtv.png", hazardtv_logo)
     app.router.add_get("/stream/main.ts", stream)
     app.router.add_get("/stream/hazard.ts", hazard_stream)
     app.router.add_get("/config", show_config)
@@ -116,6 +124,8 @@ async def index(request: web.Request) -> web.Response:
             "xmltv": "/xmltv.xml",
             "stream": "/stream/main.ts",
             "hazard_stream": "/stream/hazard.ts",
+            "channel_logo": "/logos/privatetv.png",
+            "hazard_logo": "/logos/hazardtv.png",
         },
     }
     return web.json_response(payload)
@@ -208,6 +218,26 @@ async def xmltv(request: web.Request) -> web.Response:
         content_type="application/xml",
         charset="utf-8",
         headers={"Cache-Control": "no-cache"},
+    )
+
+
+async def privatetv_logo(request: web.Request) -> web.Response:
+    return _builtin_logo_response("privatetv.png")
+
+
+async def hazardtv_logo(request: web.Request) -> web.Response:
+    return _builtin_logo_response("hazardtv.png")
+
+
+def _builtin_logo_response(filename: str) -> web.Response:
+    resource = resources.files("privatetv").joinpath(f"assets/logos/{filename}")
+    if not resource.is_file():  # pragma: no cover - packaging/runtime guard
+        raise web.HTTPNotFound(text=f"Built-in logo not found: {filename}")
+    body = resource.read_bytes()
+    return web.Response(
+        body=body,
+        content_type="image/png",
+        headers={"Cache-Control": "public, max-age=3600"},
     )
 
 

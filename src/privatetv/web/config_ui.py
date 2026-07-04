@@ -33,6 +33,7 @@ def render_config_page(
           {_input('server.public_base_url', data['server']['public_base_url'])}
 
           <h2>Main channel</h2>
+          <p class="hint">Leave <code>channel.icon</code> empty to use the built-in PrivateTV logo.</p>
           {_input('channel.id', data['channel']['id'])}
           {_input('channel.name', data['channel']['name'])}
           {_input('channel.icon', data['channel']['icon'])}
@@ -40,6 +41,7 @@ def render_config_page(
           {_input('channel.language', data['channel']['language'])}
 
           <h2>Hazard TV</h2>
+          <p class="hint">Leave <code>hazard_channel.icon</code> empty to use the built-in Hazard TV logo.</p>
           {_checkbox('hazard_channel.enabled', data['hazard_channel']['enabled'])}
           {_input('hazard_channel.id', data['hazard_channel']['id'])}
           {_input('hazard_channel.name', data['hazard_channel']['name'])}

@@ -79,6 +79,31 @@ async def _get_text(settings, path: str, stream_provider: StreamProvider | None 
         await client.close()
 
 
+async def _get_bytes(settings, path: str) -> tuple[int, str, bytes]:
+    server = TestServer(create_app(settings))
+    client = TestClient(server)
+    await client.start_server()
+    try:
+        response = await client.get(path)
+        return response.status, response.headers.get("Content-Type", ""), await response.read()
+    finally:
+        await client.close()
+
+
+def test_http_logo_endpoints_serve_builtin_channel_logos(tmp_path: Path) -> None:
+    settings = _hazard_settings(tmp_path)
+
+    status, content_type, body = asyncio.run(_get_bytes(settings, "/logos/privatetv.png"))
+    assert status == 200
+    assert content_type == "image/png"
+    assert body.startswith(b"\x89PNG\r\n\x1a\n")
+
+    status, content_type, body = asyncio.run(_get_bytes(settings, "/logos/hazardtv.png"))
+    assert status == 200
+    assert content_type == "image/png"
+    assert body.startswith(b"\x89PNG\r\n\x1a\n")
+
+
 def test_http_playlist_endpoint_returns_stable_m3u(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
 

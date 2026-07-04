@@ -1,7 +1,14 @@
 from pathlib import Path
 
 from privatetv.config import load_settings, settings_from_mapping
-from privatetv.tvh import render_empty_xmltv, render_m3u, stream_url, xmltv_url
+from privatetv.tvh import (
+    channel_logo_url,
+    hazard_logo_url,
+    render_empty_xmltv,
+    render_m3u,
+    stream_url,
+    xmltv_url,
+)
 
 
 def test_m3u_contains_stable_channel_stream_and_xmltv_url() -> None:
@@ -14,6 +21,14 @@ def test_m3u_contains_stable_channel_stream_and_xmltv_url() -> None:
     assert 'tvg-name="PrivateTV"' in m3u
     assert 'group-title="Local"' in m3u
     assert 'http://127.0.0.1:9988/stream/main.ts' in m3u
+
+
+def test_m3u_uses_builtin_logo_when_no_icon_is_configured() -> None:
+    settings = load_settings(Path("config/privatetv.example.yml"))
+
+    m3u = render_m3u(settings)
+
+    assert f'tvg-logo="{channel_logo_url(settings)}"' in m3u
 
 
 def test_m3u_includes_logo_when_configured() -> None:
@@ -61,6 +76,8 @@ def test_public_urls_are_stable_and_base_url_is_not_duplicated() -> None:
 
     assert stream_url(settings) == "http://127.0.0.1:9988/stream/main.ts"
     assert xmltv_url(settings) == "http://127.0.0.1:9988/xmltv.xml"
+    assert channel_logo_url(settings) == "http://127.0.0.1:9988/logos/privatetv.png"
+    assert hazard_logo_url(settings) == "http://127.0.0.1:9988/logos/hazardtv.png"
 
 
 def test_hazard_channel_is_not_in_m3u_by_default() -> None:
@@ -113,5 +130,7 @@ def test_hazard_channel_can_be_added_to_m3u() -> None:
 
     assert 'tvg-id="privatetv"' in m3u
     assert 'tvg-id="hazardtv"' in m3u
+    assert f'tvg-logo="{channel_logo_url(settings)}"' in m3u
+    assert f'tvg-logo="{hazard_logo_url(settings)}"' in m3u
     assert "http://pi.local:9988/stream/main.ts" in m3u
     assert "http://pi.local:9988/stream/hazard.ts" in m3u

@@ -3,7 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from privatetv.config import AppSettings
-from privatetv.tvh.urls import hazard_stream_url, stream_url, xmltv_url
+from privatetv.tvh.urls import (
+    channel_logo_url,
+    hazard_logo_url,
+    hazard_stream_url,
+    stream_url,
+    xmltv_url,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,7 +40,7 @@ def _playlist_channels(settings: AppSettings) -> tuple[PlaylistChannel, ...]:
         id=settings.channel.id,
         name=settings.channel.name,
         group_title=settings.channel.group_title,
-        icon=settings.channel.icon,
+        icon=settings.channel.icon or channel_logo_url(settings),
         url=stream_url(settings),
     )
     if not settings.hazard_channel.enabled:
@@ -43,7 +49,7 @@ def _playlist_channels(settings: AppSettings) -> tuple[PlaylistChannel, ...]:
         id=settings.hazard_channel.id,
         name=settings.hazard_channel.name,
         group_title=settings.hazard_channel.group_title,
-        icon=settings.hazard_channel.icon,
+        icon=settings.hazard_channel.icon or hazard_logo_url(settings),
         url=hazard_stream_url(settings),
     )
     return (main, hazard)

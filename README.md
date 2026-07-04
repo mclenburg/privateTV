@@ -24,6 +24,7 @@ PrivateTV is under active development. The current implementation provides:
 - `shuffle_no_repeat` and `alphabetical` schedule strategies
 - production-oriented XMLTV rendering from the stored schedule
 - M3U playlist rendering with stable tvheadend channel metadata
+- built-in sender logos for PrivateTV and Hazard TV, served by the HTTP service and referenced from the M3U
 - HTTP endpoints for `/health`, `/playlist.m3u`, `/xmltv.xml`, and `/stream/main.ts`
 - per-client FFmpeg streaming with clock-based seek offset
 - startup hardening for empty or broken FFmpeg streams
@@ -197,6 +198,7 @@ privatetv m3u --config config/privatetv.example.yml
 
 The default strategy is `shuffle_no_repeat`: all enabled titles are shuffled, and each title is used once before the next shuffled cycle starts. The `alphabetical` strategy is available for deterministic testing and debugging.
 
+If `channel.icon` or `hazard_channel.icon` is left empty, PrivateTV automatically uses the built-in logo assets that are served by the PrivateTV HTTP service.
 
 ## Running the HTTP service
 
@@ -211,6 +213,8 @@ The service opens the configuration page at `http://127.0.0.1:9988/` and exposes
 - `http://127.0.0.1:9988/config`
 - `http://127.0.0.1:9988/config/browse`
 - `http://127.0.0.1:9988/health`
+- `http://127.0.0.1:9988/logos/privatetv.png`
+- `http://127.0.0.1:9988/logos/hazardtv.png`
 - `http://127.0.0.1:9988/playlist.m3u`
 - `http://127.0.0.1:9988/xmltv.xml`
 - `http://127.0.0.1:9988/stream/main.ts`
@@ -277,3 +281,5 @@ privatetv spike-tvh-upstream --host 0.0.0.0 --port 9998
 `spike-dvd-concat` builds DVD VOB concat candidate commands and can optionally execute them against real VOB files.
 
 `spike-tvh-upstream` starts a small probe server so you can verify whether tvheadend opens one or multiple upstream connections when several clients watch the same IPTV channel.
+
+Logo overlays inside the actual video stream are intentionally not enabled by default. Overlaying a channel logo would force video filtering and re-encoding, which would defeat the current low-overhead stream-copy design and reduce the number of reliable parallel streams on a Raspberry Pi.

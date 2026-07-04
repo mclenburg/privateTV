@@ -23,3 +23,11 @@ def playlist_url(settings: AppSettings) -> str:
 
 def xmltv_url(settings: AppSettings) -> str:
     return public_url(settings, "/xmltv.xml")
+
+
+def channel_logo_url(settings: AppSettings) -> str:
+    return public_url(settings, "/logos/privatetv.png")
+
+
+def hazard_logo_url(settings: AppSettings) -> str:
+    return public_url(settings, "/logos/hazardtv.png")

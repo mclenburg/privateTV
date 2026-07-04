@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "privatetv"
-version = "0.13.0"
+version = "0.14.0"
 description = "PrivateTV: a local linear IPTV channel for tvheadend"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -42,3 +42,6 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM"]
 ignore = []
+
+[tool.setuptools.package-data]
+privatetv = ["assets/logos/*.png"]
