@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+ENV/
+build/
+dist/
+*.egg-info/
+.eggs/
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.pytype/
+
+# PrivateTV runtime data
+*.sqlite
+*.sqlite3
+*.db
+/var/
+/runtime/
+*.log
+*.pid
+*.ts
+*.m3u
+*.xml
+!/tests/fixtures/**/*.xml
+
+# IDE/editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary patch/build files
+/tmp/
+*.zip

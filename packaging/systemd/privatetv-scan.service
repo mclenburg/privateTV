@@ -1,0 +1,10 @@
+[Unit]
+Description=Scan local media for PrivateTV
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=privatetv
+Group=privatetv
+WorkingDirectory=/opt/privatetv
+ExecStart=/opt/privatetv/.venv/bin/privatetv scan --config /etc/privatetv/config.yml

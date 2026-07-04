@@ -1,0 +1,24 @@
+[Unit]
+Description=PrivateTV local IPTV channel
+Documentation=https://github.com/your-org/privatetv
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=privatetv
+Group=privatetv
+WorkingDirectory=/opt/privatetv
+ExecStart=/opt/privatetv/.venv/bin/privatetv serve --config /etc/privatetv/config.yml
+Restart=on-failure
+RestartSec=5
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/lib/privatetv
+ReadOnlyPaths=/srv/media
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,2 @@
+# PrivateTV logs to journald by default. This file is intentionally empty-ish and
+# only documents that no classic /var/log/privatetv/*.log rotation is required.

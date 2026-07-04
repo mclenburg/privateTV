@@ -1,0 +1,74 @@
+server:
+  host: "127.0.0.1"
+  port: 9988
+  public_base_url: "http://127.0.0.1:9988"
+
+channel:
+  id: "privatetv"
+  name: "PrivateTV"
+  icon: ""
+  group_title: "Local"
+  language: "de"
+
+# Optional random channel. Hazard TV has no XMLTV schedule. Each request starts
+# with a random movie from the beginning; following movies are selected randomly
+# as long as the client keeps watching. It shares the global stream limit with
+# the main channel.
+hazard_channel:
+  enabled: false
+  id: "hazardtv"
+  name: "Hazard TV"
+  icon: ""
+  group_title: "Local"
+  language: "de"
+  random_seed: 20260704
+  avoid_immediate_repeat: true
+
+media:
+  directories:
+    - "tests/fixtures/media"
+  recursive: true
+  follow_symlinks: false
+  ignore_hidden_directories: true
+  extensions:
+    - ".avi"
+    - ".mpg"
+    - ".mpeg"
+    - ".mp4"
+    - ".mkv"
+    - ".ts"
+    - ".vob"
+  dvd:
+    enabled: true
+    detect_video_ts: true
+    main_title_strategy: "largest_titleset"
+    min_main_title_size_mb: 0
+    min_main_title_duration_seconds: 1
+
+schedule:
+  # XMLTV should always extend at least this far into the future.
+  # PrivateTV rebuilds up to days_ahead whenever the stored timeline falls below this threshold.
+  minimum_days_ahead: 3
+  days_ahead: 5
+  timezone: "Europe/Berlin"
+  rebuild_hour: 3
+  strategy: "shuffle_no_repeat"
+  allow_overflow_across_days: true
+  random_seed: 20260704
+
+streaming:
+  max_parallel_streams: 4
+  output_container: "mpegts"
+  prefer_stream_copy: true
+  transcode_when_needed: false
+  ffmpeg_path: "/usr/bin/ffmpeg"
+  ffprobe_path: "/usr/bin/ffprobe"
+  accepted_seek_tolerance_seconds: 10
+
+# For development this stays inside the repository working tree.
+# Production path should be /var/lib/privatetv/privatetv.sqlite3.
+database:
+  path: "var/lib/privatetv/privatetv.sqlite3"
+
+logging:
+  level: "INFO"

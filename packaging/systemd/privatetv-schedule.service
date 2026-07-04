@@ -1,0 +1,10 @@
+[Unit]
+Description=Maintain PrivateTV schedule horizon
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=privatetv
+Group=privatetv
+WorkingDirectory=/opt/privatetv
+ExecStart=/opt/privatetv/.venv/bin/privatetv maintain-schedule --config /etc/privatetv/config.yml
