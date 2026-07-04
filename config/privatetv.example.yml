@@ -55,7 +55,6 @@ schedule:
   timezone: "Europe/Berlin"
   rebuild_hour: 3
   strategy: "shuffle_no_repeat"
-  allow_overflow_across_days: true
   random_seed: 20260704
 
 streaming:

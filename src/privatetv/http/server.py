@@ -18,6 +18,7 @@ from privatetv.hazard import HazardRandomStreamProvider, HazardSelectionError
 from privatetv.http.keys import (
     CONFIG_PATH_KEY,
     HAZARD_PROVIDER_KEY,
+    RUNTIME_KEY,
     SETTINGS_KEY,
     STREAM_PROVIDER_KEY,
     STREAM_STATE_KEY,
@@ -67,12 +68,20 @@ def create_app(
     """Create the aiohttp application used by the PrivateTV service."""
     app = web.Application()
     provider = stream_provider or PerClientFfmpegStreamProvider(settings)
+    app[RUNTIME_KEY] = {
+        "settings": settings,
+        "stream_state": StreamState(settings.streaming.max_parallel_streams),
+        "stream_provider": provider,
+        "hazard_provider": hazard_provider or HazardRandomStreamProvider(settings, provider),
+    }
+    # Keep initial legacy app keys for tests/extensions that may still inspect the app mapping.
+    # Runtime updates mutate app[RUNTIME_KEY] instead of the started aiohttp app mapping.
     app[SETTINGS_KEY] = settings
+    app[STREAM_STATE_KEY] = app[RUNTIME_KEY]["stream_state"]
+    app[STREAM_PROVIDER_KEY] = provider
+    app[HAZARD_PROVIDER_KEY] = app[RUNTIME_KEY]["hazard_provider"]
     if config_path is not None:
         app[CONFIG_PATH_KEY] = Path(config_path)
-    app[STREAM_STATE_KEY] = StreamState(settings.streaming.max_parallel_streams)
-    app[STREAM_PROVIDER_KEY] = provider
-    app[HAZARD_PROVIDER_KEY] = hazard_provider or HazardRandomStreamProvider(settings, provider)
     app.on_startup.append(_initialize_database)
 
     app.router.add_get("/health", health)
@@ -420,20 +429,24 @@ def _hazard_has_playable_media(settings: AppSettings) -> bool:
         return bool(MediaRepository(connection).list_playable_media_items())
 
 
+def _runtime(app: web.Application) -> dict:
+    return app[RUNTIME_KEY]
+
+
 def _settings(app: web.Application) -> AppSettings:
-    return app[SETTINGS_KEY]
+    return _runtime(app)["settings"]
 
 
 def _stream_state(app: web.Application) -> StreamState:
-    return app[STREAM_STATE_KEY]
+    return _runtime(app)["stream_state"]
 
 
 def _stream_provider(app: web.Application) -> StreamProvider:
-    return app[STREAM_PROVIDER_KEY]
+    return _runtime(app)["stream_provider"]
 
 
 def _hazard_provider(app: web.Application) -> HazardRandomStreamProvider:
-    return app[HAZARD_PROVIDER_KEY]
+    return _runtime(app)["hazard_provider"]
 
 
 def _current_programme_payload(programme: CurrentProgramme | None) -> dict | None:

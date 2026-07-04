@@ -35,14 +35,16 @@ class ScheduleRepository:
         return datetime.fromisoformat(row["end_time"]) if row and row["end_time"] else None
 
     def append_entries(self, entries: list[ScheduleEntry]) -> int:
-        for entry in entries:
-            self._connection.execute(
-                """
-                INSERT INTO schedule_entry (
-                    channel_id, media_item_id, start_time, end_time,
-                    start_offset_seconds, title, description
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
+        if not entries:
+            return 0
+        self._connection.executemany(
+            """
+            INSERT INTO schedule_entry (
+                channel_id, media_item_id, start_time, end_time,
+                start_offset_seconds, title, description
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
                 (
                     entry.channel_id,
                     entry.media_item_id,
@@ -51,8 +53,10 @@ class ScheduleRepository:
                     entry.start_offset_seconds,
                     entry.title,
                     entry.description,
-                ),
-            )
+                )
+                for entry in entries
+            ],
+        )
         return len(entries)
 
     def replace_entries_from(self, channel_id: str, from_time: datetime, entries: list[ScheduleEntry]) -> int:

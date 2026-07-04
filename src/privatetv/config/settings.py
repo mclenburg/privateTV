@@ -72,7 +72,6 @@ class ScheduleSettings:
     timezone: str
     rebuild_hour: int
     strategy: str
-    allow_overflow_across_days: bool = True
     random_seed: int | None = None
 
     @property
@@ -187,7 +186,6 @@ def settings_from_mapping(raw: dict) -> AppSettings:
             timezone=str(schedule.get("timezone", "Europe/Berlin")),
             rebuild_hour=int(schedule.get("rebuild_hour", 3)),
             strategy=str(schedule.get("strategy", "shuffle_no_repeat")),
-            allow_overflow_across_days=bool(schedule.get("allow_overflow_across_days", True)),
             random_seed=schedule.get("random_seed"),
         ),
         streaming=StreamingSettings(
@@ -296,7 +294,6 @@ def settings_to_mapping(settings: AppSettings) -> dict:
             "timezone": settings.schedule.timezone,
             "rebuild_hour": settings.schedule.rebuild_hour,
             "strategy": settings.schedule.strategy,
-            "allow_overflow_across_days": settings.schedule.allow_overflow_across_days,
             "random_seed": settings.schedule.random_seed,
         },
         "streaming": {

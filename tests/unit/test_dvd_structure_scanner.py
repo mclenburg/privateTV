@@ -77,3 +77,59 @@ def test_dvd_scanner_imports_largest_titleset_as_one_media_item(tmp_path: Path) 
     assert item.duration_seconds == 20.0
     assert [asset.path.name for asset in assets] == ["VTS_01_1.VOB", "VTS_01_2.VOB"]
     assert all(asset.role == "dvd_main_title_part" for asset in assets)
+
+
+def test_dvd_scanner_stores_absolute_asset_paths_for_relative_media_root(
+    tmp_path: Path, monkeypatch
+) -> None:
+    video_ts = tmp_path / "relative-root" / "Movie DVD" / "VIDEO_TS"
+    video_ts.mkdir(parents=True)
+    (video_ts / "VIDEO_TS.IFO").write_bytes(b"ifo")
+    (video_ts / "VTS_01_1.VOB").write_bytes(b"a" * 10)
+    (video_ts / "VTS_01_2.VOB").write_bytes(b"b" * 12)
+    monkeypatch.chdir(tmp_path)
+
+    settings = settings_from_mapping(
+        {
+            "server": {"host": "127.0.0.1", "port": 9988, "public_base_url": "http://x"},
+            "channel": {"id": "privatetv", "name": "PrivateTV"},
+            "media": {
+                "directories": ["relative-root"],
+                "recursive": True,
+                "extensions": [".mp4", ".vob"],
+                "dvd": {
+                    "enabled": True,
+                    "detect_video_ts": True,
+                    "main_title_strategy": "largest_titleset",
+                    "min_main_title_size_mb": 0,
+                    "min_main_title_duration_seconds": 1,
+                },
+            },
+            "schedule": {
+                "days_ahead": 5,
+                "timezone": "Europe/Berlin",
+                "rebuild_hour": 3,
+                "strategy": "shuffle_no_repeat",
+            },
+            "streaming": {
+                "max_parallel_streams": 4,
+                "output_container": "mpegts",
+                "prefer_stream_copy": True,
+                "transcode_when_needed": False,
+                "ffmpeg_path": "/usr/bin/ffmpeg",
+                "ffprobe_path": "/usr/bin/ffprobe",
+            },
+            "database": {"path": str(tmp_path / "db.sqlite3")},
+        }
+    )
+
+    items = DvdStructureScanner(settings, FakeProbe()).scan()
+
+    assert len(items) == 1
+    item, assets = items[0]
+    assert Path(item.source_root).is_absolute()
+    assert all(asset.path.is_absolute() for asset in assets)
+    assert [asset.path for asset in assets] == [
+        (video_ts / "VTS_01_1.VOB").resolve(),
+        (video_ts / "VTS_01_2.VOB").resolve(),
+    ]

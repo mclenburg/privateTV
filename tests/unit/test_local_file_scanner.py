@@ -69,3 +69,48 @@ def test_scanner_finds_supported_files_recursively_and_skips_video_ts(tmp_path: 
     assert {item.source_kind for item, _assets in items} == {SourceKind.LOCAL_FILE}
     assert all(item.scan_status == ScanStatus.OK for item, _assets in items)
     assert all(assets[0].role == "primary" for _item, assets in items)
+
+
+def test_scanner_stores_absolute_asset_paths_for_relative_media_root(
+    tmp_path: Path, monkeypatch
+) -> None:
+    media_root = tmp_path / "relative-root"
+    media_root.mkdir()
+    (media_root / "movie.mp4").write_bytes(b"movie")
+    monkeypatch.chdir(tmp_path)
+
+    settings = settings_from_mapping(
+        {
+            "server": {"host": "127.0.0.1", "port": 9988, "public_base_url": "http://x"},
+            "channel": {"id": "privatetv", "name": "PrivateTV"},
+            "media": {
+                "directories": ["relative-root"],
+                "recursive": True,
+                "extensions": [".mp4"],
+                "dvd": {"enabled": True},
+            },
+            "schedule": {
+                "days_ahead": 5,
+                "timezone": "Europe/Berlin",
+                "rebuild_hour": 3,
+                "strategy": "shuffle_no_repeat",
+            },
+            "streaming": {
+                "max_parallel_streams": 4,
+                "output_container": "mpegts",
+                "prefer_stream_copy": True,
+                "transcode_when_needed": False,
+                "ffmpeg_path": "/usr/bin/ffmpeg",
+                "ffprobe_path": "/usr/bin/ffprobe",
+            },
+            "database": {"path": str(tmp_path / "db.sqlite3")},
+        }
+    )
+
+    items = LocalFileScanner(settings, FakeProbe()).scan()
+
+    assert len(items) == 1
+    item, assets = items[0]
+    assert Path(item.source_root).is_absolute()
+    assert assets[0].path.is_absolute()
+    assert assets[0].path == (media_root / "movie.mp4").resolve()

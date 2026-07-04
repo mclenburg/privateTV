@@ -53,13 +53,4 @@ CREATE TABLE IF NOT EXISTS schedule_entry (
 CREATE INDEX IF NOT EXISTS idx_schedule_entry_channel_time
 ON schedule_entry(channel_id, start_time, end_time);
 
-CREATE TABLE IF NOT EXISTS runtime_stream (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    client_addr TEXT,
-    started_at TEXT NOT NULL,
-    schedule_entry_id INTEGER,
-    media_item_id INTEGER,
-    ffmpeg_pid INTEGER,
-    status TEXT NOT NULL
-);
 """

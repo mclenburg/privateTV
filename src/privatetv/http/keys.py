@@ -13,3 +13,5 @@ CONFIG_PATH_KEY = web.AppKey("config_path", Path)
 STREAM_PROVIDER_KEY = web.AppKey("stream_provider", StreamProvider)
 HAZARD_PROVIDER_KEY = web.AppKey("hazard_provider", HazardRandomStreamProvider)
 STREAM_STATE_KEY = web.AppKey("stream_state", object)
+
+RUNTIME_KEY = web.AppKey("runtime", dict)

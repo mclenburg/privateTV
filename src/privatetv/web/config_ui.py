@@ -7,7 +7,7 @@ from typing import Any
 from aiohttp import web
 
 from privatetv.config import AppSettings, settings_from_mapping, settings_to_mapping, write_settings
-from privatetv.http.keys import CONFIG_PATH_KEY, SETTINGS_KEY
+from privatetv.http.keys import CONFIG_PATH_KEY, RUNTIME_KEY
 from privatetv.domain.errors import ConfigurationError
 
 
@@ -76,7 +76,6 @@ def render_config_page(
           {_input('schedule.timezone', data['schedule']['timezone'])}
           {_input('schedule.rebuild_hour', data['schedule']['rebuild_hour'], input_type='number')}
           {_select('schedule.strategy', data['schedule']['strategy'], ['shuffle_no_repeat', 'alphabetical'])}
-          {_checkbox('schedule.allow_overflow_across_days', data['schedule']['allow_overflow_across_days'])}
           {_input('schedule.random_seed', data['schedule']['random_seed'] if data['schedule']['random_seed'] is not None else '', input_type='number')}
 
           <h2>Streaming</h2>
@@ -99,13 +98,13 @@ def render_config_page(
 
 
 async def show_config(request: web.Request) -> web.Response:
-    settings = request.app[SETTINGS_KEY]
+    settings = _settings(request.app)
     config_path = request.app.get(CONFIG_PATH_KEY)
     return web.Response(text=render_config_page(settings, config_path=config_path), content_type="text/html")
 
 
 async def save_config(request: web.Request) -> web.Response:
-    current_settings = request.app[SETTINGS_KEY]
+    current_settings = _settings(request.app)
     config_path = request.app.get(CONFIG_PATH_KEY)
     if config_path is None:
         return web.Response(
@@ -128,7 +127,6 @@ async def save_config(request: web.Request) -> web.Response:
             content_type="text/html",
             status=400,
         )
-    request.app[SETTINGS_KEY] = new_settings
     _refresh_runtime_services(request.app, new_settings)
     return web.Response(
         text=render_config_page(new_settings, config_path=config_path, message=f"Saved {config_path}"),
@@ -137,7 +135,7 @@ async def save_config(request: web.Request) -> web.Response:
 
 
 async def browse_directories(request: web.Request) -> web.Response:
-    settings = request.app[SETTINGS_KEY]
+    settings = _settings(request.app)
     raw_path = request.query.get("path") or _default_browse_path(settings)
     path = Path(raw_path).expanduser()
     if not path.is_absolute():
@@ -177,7 +175,7 @@ async def browse_directories(request: web.Request) -> web.Response:
 
 
 async def add_media_directory(request: web.Request) -> web.Response:
-    settings = request.app[SETTINGS_KEY]
+    settings = _settings(request.app)
     config_path = request.app.get(CONFIG_PATH_KEY)
     form = await request.post()
     directory = Path(str(form.get("path", ""))).expanduser()
@@ -204,7 +202,6 @@ async def add_media_directory(request: web.Request) -> web.Response:
             content_type="text/html",
             status=400,
         )
-    request.app[SETTINGS_KEY] = new_settings
     _refresh_runtime_services(request.app, new_settings)
     return web.Response(
         text=render_config_page(new_settings, config_path=config_path, message=f"Added {directory}"),
@@ -212,19 +209,24 @@ async def add_media_directory(request: web.Request) -> web.Response:
     )
 
 
+def _settings(app: web.Application) -> AppSettings:
+    return app[RUNTIME_KEY]["settings"]
+
+
 def _refresh_runtime_services(app: web.Application, settings: AppSettings) -> None:
     # Import lazily to avoid a config-ui dependency cycle during tests.
     from privatetv.hazard import HazardRandomStreamProvider
-    from privatetv.http.keys import HAZARD_PROVIDER_KEY, STREAM_PROVIDER_KEY, STREAM_STATE_KEY
     from privatetv.http.server import StreamState
     from privatetv.streaming import PerClientFfmpegStreamProvider
 
+    runtime = app[RUNTIME_KEY]
     provider = PerClientFfmpegStreamProvider(settings)
-    app[STREAM_PROVIDER_KEY] = provider
-    app[HAZARD_PROVIDER_KEY] = HazardRandomStreamProvider(settings, provider)
-    current_state = app[STREAM_STATE_KEY]
+    runtime["settings"] = settings
+    runtime["stream_provider"] = provider
+    runtime["hazard_provider"] = HazardRandomStreamProvider(settings, provider)
+    current_state = runtime["stream_state"]
     if current_state.active_streams == 0:
-        app[STREAM_STATE_KEY] = StreamState(settings.streaming.max_parallel_streams)
+        runtime["stream_state"] = StreamState(settings.streaming.max_parallel_streams)
 
 
 def _form_to_mapping(form: Any) -> dict:
@@ -290,7 +292,6 @@ def _form_to_mapping(form: Any) -> dict:
             "timezone": text("schedule.timezone", "Europe/Berlin"),
             "rebuild_hour": integer("schedule.rebuild_hour", 3),
             "strategy": text("schedule.strategy", "shuffle_no_repeat"),
-            "allow_overflow_across_days": checkbox("schedule.allow_overflow_across_days"),
             "random_seed": optional_integer("schedule.random_seed"),
         },
         "streaming": {

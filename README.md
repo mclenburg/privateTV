@@ -96,6 +96,8 @@ http://<raspberry-pi>:9988/
 
 The media directory browser in the UI selects paths on the PrivateTV server, not files or folders from the browser client.
 
+Security note: the built-in configuration UI is intended for a trusted LAN only. Do not expose the PrivateTV HTTP service through router port forwarding or a public reverse proxy without adding an authentication layer in front of it. The configuration UI can change server-side paths and persist the YAML configuration.
+
 Enable the main service after the configuration is verified:
 
 ```bash

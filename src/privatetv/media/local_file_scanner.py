@@ -73,15 +73,17 @@ class LocalFileScanner:
         return path.suffix.lower() in self._extensions
 
     def _item_for_file(self, root: Path, path: Path) -> tuple[MediaItem, tuple[MediaAsset, ...]]:
-        source_uri = path.resolve().as_uri()
+        resolved_root = root.resolve()
+        resolved_path = path.resolve()
+        source_uri = resolved_path.as_uri()
         try:
-            metadata = self._probe.probe(path)
+            metadata = self._probe.probe(resolved_path)
             item = MediaItem(
                 id=None,
                 source_kind=SourceKind.LOCAL_FILE,
                 source_uri=source_uri,
-                source_root=root,
-                title=title_from_path(path),
+                source_root=resolved_root,
+                title=title_from_path(resolved_path),
                 media_type="video_file",
                 duration_seconds=metadata.duration_seconds,
                 container=metadata.container,
@@ -92,13 +94,13 @@ class LocalFileScanner:
                 scan_status=ScanStatus.OK,
             )
         except ProbeError as exc:
-            file_stat = path.stat()
+            file_stat = resolved_path.stat()
             item = MediaItem(
                 id=None,
                 source_kind=SourceKind.LOCAL_FILE,
                 source_uri=source_uri,
-                source_root=root,
-                title=title_from_path(path),
+                source_root=resolved_root,
+                title=title_from_path(resolved_path),
                 media_type="video_file",
                 duration_seconds=0.001,
                 file_size_bytes=file_stat.st_size,
@@ -111,9 +113,9 @@ class LocalFileScanner:
             id=None,
             media_item_id=0,
             asset_order=1,
-            path=path,
+            path=resolved_path,
             role="primary",
-            file_size_bytes=path.stat().st_size,
+            file_size_bytes=resolved_path.stat().st_size,
         )
         return item, (asset,)
 

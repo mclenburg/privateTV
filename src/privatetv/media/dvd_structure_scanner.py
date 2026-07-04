@@ -81,7 +81,9 @@ class DvdStructureScanner:
     def _item_for_video_ts(
         self, root: Path, video_ts_dir: Path
     ) -> tuple[MediaItem, tuple[MediaAsset, ...]] | None:
-        title_set = self._select_main_title_set(video_ts_dir)
+        resolved_root = root.resolve()
+        resolved_video_ts_dir = video_ts_dir.resolve()
+        title_set = self._select_main_title_set(resolved_video_ts_dir)
         if title_set is None:
             return None
 
@@ -98,13 +100,13 @@ class DvdStructureScanner:
         if duration_seconds and duration_seconds < min_duration:
             return None
 
-        source_uri = "dvd://" + video_ts_dir.resolve().as_posix()
+        source_uri = "dvd://" + resolved_video_ts_dir.as_posix()
         item = MediaItem(
             id=None,
             source_kind=SourceKind.DVD_STRUCTURE,
             source_uri=source_uri,
-            source_root=root,
-            title=_title_from_video_ts(video_ts_dir),
+            source_root=resolved_root,
+            title=_title_from_video_ts(resolved_video_ts_dir),
             media_type="dvd_main_title",
             duration_seconds=duration_seconds if duration_seconds > 0 else 0.001,
             container="dvd-video",
