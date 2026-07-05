@@ -66,6 +66,27 @@ class ScheduleRepository:
         )
         return self.append_entries(entries)
 
+
+    def refresh_titles_from_media(self, channel_id: str | None = None) -> int:
+        where_clause = ""
+        params: tuple[object, ...] = ()
+        if channel_id is not None:
+            where_clause = "WHERE schedule_entry.channel_id = ?"
+            params = (channel_id,)
+        cursor = self._connection.execute(
+            f"""
+            UPDATE schedule_entry
+            SET title = (
+                SELECT media_item.title
+                FROM media_item
+                WHERE media_item.id = schedule_entry.media_item_id
+            )
+            {where_clause}
+            """,
+            params,
+        )
+        return int(cursor.rowcount or 0)
+
     def list_entries(
         self,
         channel_id: str,

@@ -167,6 +167,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
         missing_items = 0
         for source_kind, seen_source_uris in seen_by_kind.items():
             missing_items += repository.mark_missing_except(source_kind, seen_source_uris)
+        refreshed_schedule_titles = ScheduleRepository(connection).refresh_titles_from_media(settings.channel.id)
         connection.commit()
 
     print(f"Scanned media items: {scanned_items}")
@@ -176,6 +177,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
     print(f"Probe/store failures:{failed_items}")
     print(f"Skipped files:       {skipped_items}")
     print(f"Marked missing:      {missing_items}")
+    print(f"Schedule titles refreshed: {refreshed_schedule_titles}")
     if upsert_errors:
         print("Store errors:")
         for error in upsert_errors[:20]:

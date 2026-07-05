@@ -7,6 +7,7 @@ from pathlib import Path
 from privatetv.config import AppSettings
 from privatetv.domain.models import MediaAsset, MediaItem, ScanStatus, SourceKind
 from privatetv.media.probe import FfprobeMediaProbe, ProbeError
+from privatetv.media.titles import title_from_path
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,10 +130,6 @@ class LocalFileScanner:
             file_size_bytes=resolved_path.stat().st_size,
         )
         return item, (asset,)
-
-
-def title_from_path(path: Path) -> str:
-    return path.stem.replace("_", " ").replace(".", " ").strip() or path.name
 
 
 def _contains_surrogate(path: Path) -> bool:

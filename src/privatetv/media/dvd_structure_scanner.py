@@ -7,7 +7,8 @@ from pathlib import Path
 
 from privatetv.config import AppSettings
 from privatetv.domain.models import MediaAsset, MediaItem, ScanStatus, SourceKind
-from privatetv.media.local_file_scanner import _contains_surrogate, title_from_path
+from privatetv.media.local_file_scanner import _contains_surrogate
+from privatetv.media.titles import title_from_path
 from privatetv.media.probe import FfprobeMediaProbe, ProbeError, ProbeResult
 
 _VOB_RE = re.compile(r"^VTS_(?P<title_set>\d{2})_(?P<part>\d)\.VOB$", re.IGNORECASE)
