@@ -183,7 +183,15 @@ program_blocks:
     enabled: false
     directories:
       - "/data/PrivateTV/Filler"
+      - "/data/PrivateTV/Werbung"
+      - "/data/PrivateTV/Bumper"
     max_duration_seconds: 900
+    distribution: "anchor_bridge"  # or "between_programmes"
+    insert_between_movies: false
+    max_consecutive_fillers: 3
+    max_total_filler_block_seconds: 120
+    prefer_filler_after_minutes: 45
+    min_gap_between_filler_blocks_minutes: 20
     if_no_filler: "continue_current_mode"
   generated_countdown:
     enabled: false
@@ -191,7 +199,7 @@ program_blocks:
     title: "Gleich geht's weiter"
 ```
 
-Generated countdowns are intentionally limited to at most 60 seconds. Longer gaps must be filled by normal programming or configured filler media, not by an endless countdown. Filler directories are scanned as short local clips with `media_type: filler`; they are not scheduled as normal movies. If the next normal item would overrun an enabled anchor, PrivateTV uses fitting filler clips first and then schedules the final 1–60 seconds of the generated countdown so the next normal item can start exactly at the anchor. If no suitable filler is available, `continue_current_mode` preserves the old film-after-film behavior.
+Generated countdowns are intentionally limited to at most 60 seconds. Longer gaps must be filled by normal programming or configured filler media, not by an endless countdown. Filler directories are scanned as short local clips with `media_type: filler`; they are not scheduled as normal movies. `distribution: "anchor_bridge"` keeps the simple bridge-before-anchor behavior. `distribution: "between_programmes"` with `insert_between_movies: true` lets PrivateTV place short ad/bumper/trailer blocks between normal programmes, bounded by `max_consecutive_fillers` and `max_total_filler_block_seconds`, so old commercials or DVD previews do not pile up as one long wall before 20:15.
 
 ## Test fixtures
 

@@ -223,3 +223,85 @@ def test_schedule_builder_ignores_fillers_when_program_blocks_are_disabled() -> 
 
     assert result.entries[0].title == "Long Movie"
     assert all(entry.title != "Trailer" for entry in result.entries)
+
+
+def _settings_with_distributed_fillers():
+    return settings_from_mapping(
+        {
+            "server": {"host": "127.0.0.1", "port": 9988, "public_base_url": "http://127.0.0.1:9988"},
+            "channel": {"id": "privatetv", "name": "PrivateTV"},
+            "program_blocks": {
+                "enabled": True,
+                "anchors": [{"enabled": True, "time": "20:15", "title": "Der 20:15 Film"}],
+                "fillers": {
+                    "enabled": True,
+                    "directories": ["tests/fixtures/fillers"],
+                    "max_duration_seconds": 300,
+                    "distribution": "between_programmes",
+                    "insert_between_movies": True,
+                    "max_consecutive_fillers": 3,
+                    "max_total_filler_block_seconds": 120,
+                    "prefer_filler_after_minutes": 45,
+                    "min_gap_between_filler_blocks_minutes": 20,
+                },
+                "generated_countdown": {"enabled": True, "max_duration_seconds": 60, "title": "Gleich geht's weiter"},
+            },
+            "media": {"directories": ["tests/fixtures/media"]},
+            "schedule": {
+                "days_ahead": 5,
+                "timezone": "Europe/Berlin",
+                "rebuild_hour": 3,
+                "strategy": "alphabetical",
+            },
+            "streaming": {
+                "max_parallel_streams": 4,
+                "output_container": "mpegts",
+                "prefer_stream_copy": True,
+                "transcode_when_needed": False,
+                "ffmpeg_path": "/usr/bin/ffmpeg",
+                "ffprobe_path": "/usr/bin/ffprobe",
+            },
+            "database": {"path": ":memory:"},
+        }
+    )
+
+
+def test_schedule_builder_distributes_short_fillers_between_programmes_before_anchor() -> None:
+    settings = _settings_with_distributed_fillers()
+    zone = ZoneInfo("Europe/Berlin")
+    start = datetime(2026, 1, 15, 17, 0, tzinfo=zone)
+    end = datetime(2026, 1, 15, 21, 0, tzinfo=zone)
+    items = [
+        _item(1, "Feature A", 3600),
+        _item(2, "Feature B", 3600),
+        _item(3, "Primetime Movie", 7200),
+        _filler(10, "Toyota Affen", 35),
+        _filler(11, "DEA Familie", 30),
+        _countdown_item(99),
+    ]
+
+    result = ScheduleBuilder(settings).build(items, start_at=start, end_at=end)
+    titles = [entry.title for entry in result.entries]
+
+    assert "Toyota Affen" in titles or "DEA Familie" in titles
+    filler_positions = [index for index, title in enumerate(titles) if title in {"Toyota Affen", "DEA Familie"}]
+    assert filler_positions
+    assert any(0 < position < len(titles) - 1 for position in filler_positions)
+
+
+def test_schedule_builder_uses_shorter_programme_to_reduce_filler_wall_before_anchor() -> None:
+    settings = _settings_with_distributed_fillers()
+    zone = ZoneInfo("Europe/Berlin")
+    start = datetime(2026, 1, 15, 19, 0, tzinfo=zone)
+    end = datetime(2026, 1, 15, 21, 0, tzinfo=zone)
+    items = [
+        _item(1, "Long Movie", 7200),
+        _item(2, "Short Episode", 3600),
+        _filler(10, "Commercial", 30),
+        _countdown_item(99),
+    ]
+
+    result = ScheduleBuilder(settings).build(items, start_at=start, end_at=end)
+
+    assert result.entries[0].title == "Short Episode"
+    assert result.entries[0].end_time <= datetime(2026, 1, 15, 20, 15, tzinfo=zone)

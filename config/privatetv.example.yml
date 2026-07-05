@@ -72,9 +72,15 @@ program_blocks:
   fillers:
     enabled: false
     directories: []
-    # Filler clips are scanned as short local clips and used only to bridge gaps before anchors.
-    # The generated countdown remains the fine adjustment and is still limited to 60 seconds.
+    # Filler clips are scanned as short local clips.
+    # distribution: anchor_bridge keeps patch-20 behavior; between_programmes spreads short ad/bumpers between films.
+    distribution: "anchor_bridge"
+    insert_between_movies: false
     max_duration_seconds: 900
+    max_consecutive_fillers: 3
+    max_total_filler_block_seconds: 120
+    prefer_filler_after_minutes: 45
+    min_gap_between_filler_blocks_minutes: 20
     # continue_current_mode preserves the existing film-after-film behavior when no filler is available.
     if_no_filler: "continue_current_mode"
   generated_countdown:

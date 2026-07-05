@@ -105,6 +105,12 @@ class FillerSettings:
     directories: tuple[Path, ...] = ()
     max_duration_seconds: int = 900
     if_no_filler: str = "continue_current_mode"
+    distribution: str = "anchor_bridge"
+    insert_between_movies: bool = False
+    max_consecutive_fillers: int = 3
+    max_total_filler_block_seconds: int = 120
+    prefer_filler_after_minutes: int = 45
+    min_gap_between_filler_blocks_minutes: int = 20
 
 
 @dataclass(frozen=True, slots=True)
@@ -254,6 +260,12 @@ def _program_blocks_from_mapping(raw: dict) -> ProgramBlocksSettings:
             directories=tuple(Path(item) for item in fillers.get("directories", []) or []),
             max_duration_seconds=int(fillers.get("max_duration_seconds", 900)),
             if_no_filler=str(fillers.get("if_no_filler", "continue_current_mode")),
+            distribution=str(fillers.get("distribution", "anchor_bridge")),
+            insert_between_movies=bool(fillers.get("insert_between_movies", False)),
+            max_consecutive_fillers=int(fillers.get("max_consecutive_fillers", 3)),
+            max_total_filler_block_seconds=int(fillers.get("max_total_filler_block_seconds", 120)),
+            prefer_filler_after_minutes=int(fillers.get("prefer_filler_after_minutes", 45)),
+            min_gap_between_filler_blocks_minutes=int(fillers.get("min_gap_between_filler_blocks_minutes", 20)),
         ),
         generated_countdown=GeneratedCountdownSettings(
             enabled=bool(countdown.get("enabled", False)),
@@ -317,6 +329,16 @@ def _validate_settings(settings: AppSettings) -> None:
         raise ConfigurationError("program_blocks.fillers.max_duration_seconds must be at least 1")
     if settings.program_blocks.fillers.if_no_filler not in {"continue_current_mode", "start_anchor_late", "skip_anchor"}:
         raise ConfigurationError("program_blocks.fillers.if_no_filler must be continue_current_mode, start_anchor_late, or skip_anchor")
+    if settings.program_blocks.fillers.distribution not in {"anchor_bridge", "between_programmes"}:
+        raise ConfigurationError("program_blocks.fillers.distribution must be anchor_bridge or between_programmes")
+    if settings.program_blocks.fillers.max_consecutive_fillers < 1:
+        raise ConfigurationError("program_blocks.fillers.max_consecutive_fillers must be at least 1")
+    if settings.program_blocks.fillers.max_total_filler_block_seconds < 1:
+        raise ConfigurationError("program_blocks.fillers.max_total_filler_block_seconds must be at least 1")
+    if settings.program_blocks.fillers.prefer_filler_after_minutes < 1:
+        raise ConfigurationError("program_blocks.fillers.prefer_filler_after_minutes must be at least 1")
+    if settings.program_blocks.fillers.min_gap_between_filler_blocks_minutes < 0:
+        raise ConfigurationError("program_blocks.fillers.min_gap_between_filler_blocks_minutes must not be negative")
     for anchor in settings.program_blocks.anchors:
         _validate_anchor_time(anchor.time)
     if not settings.streaming.output_container.strip():
@@ -379,6 +401,12 @@ def settings_to_mapping(settings: AppSettings) -> dict:
                 "directories": [str(directory) for directory in settings.program_blocks.fillers.directories],
                 "max_duration_seconds": settings.program_blocks.fillers.max_duration_seconds,
                 "if_no_filler": settings.program_blocks.fillers.if_no_filler,
+                "distribution": settings.program_blocks.fillers.distribution,
+                "insert_between_movies": settings.program_blocks.fillers.insert_between_movies,
+                "max_consecutive_fillers": settings.program_blocks.fillers.max_consecutive_fillers,
+                "max_total_filler_block_seconds": settings.program_blocks.fillers.max_total_filler_block_seconds,
+                "prefer_filler_after_minutes": settings.program_blocks.fillers.prefer_filler_after_minutes,
+                "min_gap_between_filler_blocks_minutes": settings.program_blocks.fillers.min_gap_between_filler_blocks_minutes,
             },
             "generated_countdown": {
                 "enabled": settings.program_blocks.generated_countdown.enabled,

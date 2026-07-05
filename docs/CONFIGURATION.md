@@ -235,7 +235,17 @@ program_blocks:
     enabled: true
     directories:
       - "/data/PrivateTV/Filler"
+      - "/data/PrivateTV/Werbung"
+      - "/data/PrivateTV/Bumper"
     max_duration_seconds: 900
+    # anchor_bridge keeps the simple patch-20 behavior.
+    # between_programmes spreads short clips between normal programmes.
+    distribution: "between_programmes"
+    insert_between_movies: true
+    max_consecutive_fillers: 3
+    max_total_filler_block_seconds: 120
+    prefer_filler_after_minutes: 45
+    min_gap_between_filler_blocks_minutes: 20
     if_no_filler: "continue_current_mode"
   generated_countdown:
     enabled: true
@@ -247,7 +257,9 @@ Rules:
 
 - Existing behavior remains the default.
 - Filler clips are not part of the normal movie rotation.
-- Fillers are used only when a configured anchor would otherwise be crossed by the next normal item.
+- With `distribution: "anchor_bridge"`, fillers are used only when a configured anchor would otherwise be crossed by the next normal item.
+- With `distribution: "between_programmes"` and `insert_between_movies: true`, short filler blocks can also be placed between normal programmes so the remaining time before an anchor is split into smaller, TV-like breaks.
+- `max_consecutive_fillers` and `max_total_filler_block_seconds` prevent long walls of commercials/trailers.
 - The generated countdown is only for final fine adjustment.
 - The generated countdown must never be longer than 60 seconds.
 - If no fitting filler exists and the gap is longer than the countdown limit, `continue_current_mode` keeps the old film-after-film behavior.
@@ -256,8 +268,10 @@ A useful folder layout is:
 
 ```text
 /data/PrivateTV/Filler
+/data/PrivateTV/Werbung
 /data/PrivateTV/Trailer
 /data/PrivateTV/Bumper
+/data/PrivateTV/DVD-Vorschauen
 ```
 
 Add those folders to `program_blocks.fillers.directories` when you have local clips ready.

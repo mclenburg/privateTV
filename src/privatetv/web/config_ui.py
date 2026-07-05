@@ -91,7 +91,13 @@ def render_config_page(
           <label>program_blocks.fillers.directories <span>one server-side path per line</span>
             <textarea name="program_blocks.fillers.directories" rows="3">{_escape(_lines(data['program_blocks']['fillers']['directories']))}</textarea>
           </label>
+          {_select('program_blocks.fillers.distribution', data['program_blocks']['fillers'].get('distribution', 'anchor_bridge'), ['anchor_bridge', 'between_programmes'])}
+          {_checkbox('program_blocks.fillers.insert_between_movies', data['program_blocks']['fillers'].get('insert_between_movies', False))}
           {_input('program_blocks.fillers.max_duration_seconds', data['program_blocks']['fillers'].get('max_duration_seconds', 900), input_type='number')}
+          {_input('program_blocks.fillers.max_consecutive_fillers', data['program_blocks']['fillers'].get('max_consecutive_fillers', 3), input_type='number')}
+          {_input('program_blocks.fillers.max_total_filler_block_seconds', data['program_blocks']['fillers'].get('max_total_filler_block_seconds', 120), input_type='number')}
+          {_input('program_blocks.fillers.prefer_filler_after_minutes', data['program_blocks']['fillers'].get('prefer_filler_after_minutes', 45), input_type='number')}
+          {_input('program_blocks.fillers.min_gap_between_filler_blocks_minutes', data['program_blocks']['fillers'].get('min_gap_between_filler_blocks_minutes', 20), input_type='number')}
           {_select('program_blocks.fillers.if_no_filler', data['program_blocks']['fillers']['if_no_filler'], ['continue_current_mode', 'start_anchor_late', 'skip_anchor'])}
           {_checkbox('program_blocks.generated_countdown.enabled', data['program_blocks']['generated_countdown']['enabled'])}
           {_input('program_blocks.generated_countdown.max_duration_seconds', data['program_blocks']['generated_countdown']['max_duration_seconds'], input_type='number')}
@@ -335,6 +341,12 @@ def _form_to_mapping(form: Any) -> dict:
                 "directories": lines("program_blocks.fillers.directories"),
                 "max_duration_seconds": integer("program_blocks.fillers.max_duration_seconds", 900),
                 "if_no_filler": text("program_blocks.fillers.if_no_filler", "continue_current_mode"),
+                "distribution": text("program_blocks.fillers.distribution", "anchor_bridge"),
+                "insert_between_movies": checkbox("program_blocks.fillers.insert_between_movies"),
+                "max_consecutive_fillers": integer("program_blocks.fillers.max_consecutive_fillers", 3),
+                "max_total_filler_block_seconds": integer("program_blocks.fillers.max_total_filler_block_seconds", 120),
+                "prefer_filler_after_minutes": integer("program_blocks.fillers.prefer_filler_after_minutes", 45),
+                "min_gap_between_filler_blocks_minutes": integer("program_blocks.fillers.min_gap_between_filler_blocks_minutes", 20),
             },
             "generated_countdown": {
                 "enabled": checkbox("program_blocks.generated_countdown.enabled"),
