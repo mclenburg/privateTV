@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
 from privatetv.config import AppSettings
 from privatetv.domain.models import MediaAsset, MediaItem, ScanStatus, SourceKind
-from privatetv.media.local_file_scanner import title_from_path
+from privatetv.media.local_file_scanner import _contains_surrogate, title_from_path
 from privatetv.media.probe import FfprobeMediaProbe, ProbeError, ProbeResult
 
 _VOB_RE = re.compile(r"^VTS_(?P<title_set>\d{2})_(?P<part>\d)\.VOB$", re.IGNORECASE)
@@ -27,10 +28,15 @@ class DvdStructureScanner:
         self._probe = probe
 
     def scan(self) -> list[tuple[MediaItem, tuple[MediaAsset, ...]]]:
-        if not self._settings.media.dvd.enabled or not self._settings.media.dvd.detect_video_ts:
-            return []
+        return list(self.iter_scan_results())
 
-        items: list[tuple[MediaItem, tuple[MediaAsset, ...]]] = []
+    def iter_scan_results(
+        self,
+        progress: Callable[[str, Path], None] | None = None,
+    ) -> Iterator[tuple[MediaItem, tuple[MediaAsset, ...]]]:
+        if not self._settings.media.dvd.enabled or not self._settings.media.dvd.detect_video_ts:
+            return
+
         seen_video_ts: set[Path] = set()
         for root in self._settings.media.directories:
             if not root.exists() or not root.is_dir():
@@ -40,10 +46,15 @@ class DvdStructureScanner:
                 if resolved in seen_video_ts:
                     continue
                 seen_video_ts.add(resolved)
+                if _contains_surrogate(resolved):
+                    if progress is not None:
+                        progress("skip-invalid-path", resolved)
+                    continue
+                if progress is not None:
+                    progress("dvd-structure", resolved)
                 item = self._item_for_video_ts(root, video_ts_dir)
                 if item is not None:
-                    items.append(item)
-        return items
+                    yield item
 
     def _iter_video_ts_directories(self, root: Path):
         if self._is_video_ts_directory(root):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -24,7 +25,12 @@ class LocalFileScanner:
         self._extensions = {extension.lower() for extension in settings.media.extensions}
 
     def scan(self) -> list[tuple[MediaItem, tuple[MediaAsset, ...]]]:
-        items: list[tuple[MediaItem, tuple[MediaAsset, ...]]] = []
+        return list(self.iter_scan_results())
+
+    def iter_scan_results(
+        self,
+        progress: Callable[[str, Path], None] | None = None,
+    ) -> Iterator[tuple[MediaItem, tuple[MediaAsset, ...]]]:
         seen_paths: set[Path] = set()
         for root in self._settings.media.directories:
             if not root.exists() or not root.is_dir():
@@ -34,8 +40,13 @@ class LocalFileScanner:
                 if resolved in seen_paths:
                     continue
                 seen_paths.add(resolved)
-                items.append(self._item_for_file(root, path))
-        return items
+                if _contains_surrogate(resolved):
+                    if progress is not None:
+                        progress("skip-invalid-path", resolved)
+                    continue
+                if progress is not None:
+                    progress("local-file", resolved)
+                yield self._item_for_file(root, path)
 
     def _iter_video_files(self, root: Path):
         if self._settings.media.recursive:
@@ -122,3 +133,7 @@ class LocalFileScanner:
 
 def title_from_path(path: Path) -> str:
     return path.stem.replace("_", " ").replace(".", " ").strip() or path.name
+
+
+def _contains_surrogate(path: Path) -> bool:
+    return any("\udc80" <= character <= "\udcff" for character in str(path))

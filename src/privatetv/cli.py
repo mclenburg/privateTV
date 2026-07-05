@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import shutil
+import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -11,9 +12,9 @@ from aiohttp import web
 from privatetv import __version__
 from privatetv.config import load_settings
 from privatetv.db import MediaRepository, ScheduleRepository, connect_database, initialize_database
-from privatetv.domain.models import MediaAsset, SourceKind
+from privatetv.domain.models import MediaAsset, ScanStatus, SourceKind
 from privatetv.http import create_app
-from privatetv.media import DvdStructureScanner, FfprobeMediaProbe, LocalFileScanner, store_scan_results
+from privatetv.media import DvdStructureScanner, FfprobeMediaProbe, LocalFileScanner
 from privatetv.schedule import ScheduleMaintainer, resolve_current_programme
 from privatetv.tvh import render_empty_xmltv, render_m3u, render_xmltv
 from privatetv.util.logging import configure_logging
@@ -109,20 +110,93 @@ def cmd_scan(args: argparse.Namespace) -> int:
     settings = _load(args)
     initialize_database(settings.database.path)
     probe = FfprobeMediaProbe(settings.streaming.ffprobe_path)
-    local_results = LocalFileScanner(settings, probe).scan()
-    dvd_results = DvdStructureScanner(settings, probe).scan()
-    scan_results = [*local_results, *dvd_results]
+
+    source_kinds_to_mark_missing = {SourceKind.LOCAL_FILE, SourceKind.DVD_STRUCTURE}
+    seen_by_kind: dict[SourceKind, set[str]] = {kind: set() for kind in source_kinds_to_mark_missing}
+    scanned_items = 0
+    local_items = 0
+    dvd_items = 0
+    imported_items = 0
+    failed_items = 0
+    skipped_items = 0
+    upsert_errors: list[str] = []
+    progress_counter = 0
+
+    def progress(kind: str, path: Path) -> None:
+        nonlocal progress_counter, skipped_items
+        progress_counter += 1
+        display_path = _safe_path_for_console(path)
+        if kind == "skip-invalid-path":
+            skipped_items += 1
+            print(f"[{progress_counter}] SKIP invalid filename: {display_path}", flush=True)
+            return
+        print(f"[{progress_counter}] scan {kind}: {display_path}", flush=True)
+
+    local_scanner = LocalFileScanner(settings, probe)
+    dvd_scanner = DvdStructureScanner(settings, probe)
+
     with connect_database(settings.database.path) as connection:
-        summary = store_scan_results(
-            connection, scan_results, {SourceKind.LOCAL_FILE, SourceKind.DVD_STRUCTURE}
-        )
-    print(f"Scanned media items: {summary.scanned_items}")
-    print(f"Local files:         {len(local_results)}")
-    print(f"DVD structures:      {len(dvd_results)}")
-    print(f"Imported/updated:    {summary.imported_items}")
-    print(f"Probe failures:       {summary.failed_items}")
-    print(f"Marked missing:       {summary.missing_items}")
-    return 1 if summary.failed_items else 0
+        repository = MediaRepository(connection)
+        for item, assets in _chain_scan_results(
+            local_scanner.iter_scan_results(progress=progress),
+            dvd_scanner.iter_scan_results(progress=progress),
+        ):
+            scanned_items += 1
+            if item.source_kind == SourceKind.LOCAL_FILE:
+                local_items += 1
+            elif item.source_kind == SourceKind.DVD_STRUCTURE:
+                dvd_items += 1
+
+            try:
+                repository.upsert_media_item(item, assets)
+            except (UnicodeEncodeError, ValueError, OSError, sqlite3.Error) as exc:
+                failed_items += 1
+                upsert_errors.append(f"{_safe_text(item.source_uri)}: {exc}")
+                connection.rollback()
+                print(f"  ERROR storing item: {_safe_text(item.source_uri)} ({exc})", flush=True)
+                continue
+
+            connection.commit()
+            if item.source_kind in seen_by_kind:
+                seen_by_kind[item.source_kind].add(item.source_uri)
+            if item.scan_status == ScanStatus.OK:
+                imported_items += 1
+            else:
+                failed_items += 1
+
+        missing_items = 0
+        for source_kind, seen_source_uris in seen_by_kind.items():
+            missing_items += repository.mark_missing_except(source_kind, seen_source_uris)
+        connection.commit()
+
+    print(f"Scanned media items: {scanned_items}")
+    print(f"Local files:         {local_items}")
+    print(f"DVD structures:      {dvd_items}")
+    print(f"Imported/updated:    {imported_items}")
+    print(f"Probe/store failures:{failed_items}")
+    print(f"Skipped files:       {skipped_items}")
+    print(f"Marked missing:      {missing_items}")
+    if upsert_errors:
+        print("Store errors:")
+        for error in upsert_errors[:20]:
+            print(f"  - {error}")
+        if len(upsert_errors) > 20:
+            print(f"  ... {len(upsert_errors) - 20} more")
+    return 1 if failed_items else 0
+
+
+
+def _chain_scan_results(*iterables):
+    for iterable in iterables:
+        yield from iterable
+
+
+def _safe_path_for_console(path: Path) -> str:
+    return _safe_text(str(path))
+
+
+def _safe_text(value: str) -> str:
+    return value.encode("utf-8", "backslashreplace").decode("utf-8")
 
 
 def cmd_list_media(args: argparse.Namespace) -> int:
