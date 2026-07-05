@@ -305,3 +305,75 @@ def test_schedule_builder_uses_shorter_programme_to_reduce_filler_wall_before_an
 
     assert result.entries[0].title == "Short Episode"
     assert result.entries[0].end_time <= datetime(2026, 1, 15, 20, 15, tzinfo=zone)
+
+
+def _tagged_item(item_id: int, title: str, duration: int, *tags: str) -> MediaItem:
+    return MediaItem(
+        id=item_id,
+        source_kind=SourceKind.LOCAL_FILE,
+        source_uri=f"file:///{title}.mp4",
+        source_root=None,
+        title=title,
+        media_type="file",
+        duration_seconds=duration,
+        tags=tuple(tags),
+    )
+
+
+def _settings_with_kids_block():
+    raw = {
+        "server": {"host": "127.0.0.1", "port": 9988, "public_base_url": "http://127.0.0.1:9988"},
+        "channel": {"id": "privatetv", "name": "PrivateTV"},
+        "program_blocks": {
+            "enabled": True,
+            "blocks": [
+                {
+                    "enabled": True,
+                    "start": "06:00",
+                    "duration": "02:30:00",
+                    "title": "PrivateTV Kinderzeit",
+                    "allowed_tags": ["kids"],
+                    "denied_tags": ["nicht_fuer_kinder"],
+                }
+            ],
+        },
+        "media": {"directories": ["tests/fixtures/media"]},
+        "schedule": {"days_ahead": 5, "timezone": "Europe/Berlin", "rebuild_hour": 3, "strategy": "alphabetical"},
+        "streaming": {"max_parallel_streams": 4, "output_container": "mpegts", "prefer_stream_copy": True, "transcode_when_needed": False, "ffmpeg_path": "/usr/bin/ffmpeg", "ffprobe_path": "/usr/bin/ffprobe"},
+        "database": {"path": ":memory:"},
+    }
+    return settings_from_mapping(raw)
+
+
+def test_schedule_builder_prefers_matching_items_inside_time_block() -> None:
+    settings = _settings_with_kids_block()
+    zone = ZoneInfo("Europe/Berlin")
+    start = datetime(2026, 1, 15, 6, 0, tzinfo=zone)
+    end = start + timedelta(hours=1)
+    items = [
+        _tagged_item(1, "Action Movie", 1800, "movie"),
+        _tagged_item(2, "Simsala Grimm", 1500, "kids", "series"),
+    ]
+
+    result = ScheduleBuilder(settings).build(items, start_at=start, end_at=end)
+
+    assert result.entries[0].title == "Simsala Grimm"
+    assert all(entry.media_item_id == 2 for entry in result.entries[:2])
+
+
+def test_schedule_builder_uses_fitting_item_before_upcoming_block() -> None:
+    settings = _settings_with_kids_block()
+    zone = ZoneInfo("Europe/Berlin")
+    start = datetime(2026, 1, 15, 5, 30, tzinfo=zone)
+    end = datetime(2026, 1, 15, 6, 30, tzinfo=zone)
+    items = [
+        _tagged_item(1, "Long Movie", 7200, "movie"),
+        _tagged_item(2, "Short Feature", 1500, "movie"),
+        _tagged_item(3, "Kids Episode", 1200, "kids"),
+    ]
+
+    result = ScheduleBuilder(settings).build(items, start_at=start, end_at=end)
+
+    assert result.entries[0].title == "Short Feature"
+    assert result.entries[0].end_time <= datetime(2026, 1, 15, 6, 0, tzinfo=zone)
+    assert result.entries[1].title == "Kids Episode"

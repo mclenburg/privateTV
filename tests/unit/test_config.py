@@ -127,3 +127,37 @@ def test_program_blocks_filler_max_duration_is_validated(tmp_path: Path) -> None
 
     with pytest.raises(ConfigurationError, match="fillers.max_duration_seconds"):
         settings_from_mapping(raw)
+
+
+def test_program_blocks_parse_time_blocks(tmp_path: Path) -> None:
+    raw = _minimal_config(tmp_path)
+    raw["program_blocks"] = {
+        "enabled": True,
+        "blocks": [
+            {
+                "enabled": True,
+                "start": "06:00",
+                "duration": "02:30:00",
+                "title": "PrivateTV Kinderzeit",
+                "allowed_tags": ["kids"],
+                "denied_tags": ["nicht_fuer_kinder"],
+            }
+        ],
+    }
+
+    settings = settings_from_mapping(raw)
+
+    assert settings.program_blocks.blocks[0].start == "06:00"
+    assert settings.program_blocks.blocks[0].duration_seconds == 9000
+    assert settings.program_blocks.blocks[0].allowed_tags == ("kids",)
+
+
+def test_program_blocks_reject_too_short_blocks(tmp_path: Path) -> None:
+    raw = _minimal_config(tmp_path)
+    raw["program_blocks"] = {
+        "enabled": True,
+        "blocks": [{"enabled": True, "start": "06:00", "duration": "00:00:30"}],
+    }
+
+    with pytest.raises(ConfigurationError, match="duration"):
+        settings_from_mapping(raw)

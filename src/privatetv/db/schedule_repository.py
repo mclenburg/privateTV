@@ -16,7 +16,8 @@ class ScheduleRepository:
             """
             SELECT id, source_kind, source_uri, source_root, title, media_type,
                    duration_seconds, enabled, container, video_codec, audio_codec,
-                   file_size_bytes, mtime, scan_status, scan_error
+                   file_size_bytes, mtime, scan_status, scan_error,
+                   (SELECT group_concat(tag, ',') FROM media_tag WHERE media_tag.media_item_id = media_item.id) AS tags_csv
             FROM media_item
             WHERE enabled = 1
               AND scan_status = ?
@@ -136,7 +137,8 @@ class ScheduleRepository:
               s.start_offset_seconds, s.title AS schedule_title, s.description,
               m.id, m.source_kind, m.source_uri, m.source_root, m.title, m.media_type,
               m.duration_seconds, m.enabled, m.container, m.video_codec, m.audio_codec,
-              m.file_size_bytes, m.mtime, m.scan_status, m.scan_error
+              m.file_size_bytes, m.mtime, m.scan_status, m.scan_error,
+              (SELECT group_concat(tag, ',') FROM media_tag WHERE media_tag.media_item_id = m.id) AS tags_csv
             FROM schedule_entry s
             JOIN media_item m ON m.id = s.media_item_id
             WHERE {' AND '.join(clauses)}

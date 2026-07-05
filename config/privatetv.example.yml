@@ -29,6 +29,8 @@ hazard_channel:
 media:
   directories:
     - "tests/fixtures/media"
+  # Optional YAML tag rules. Use /etc/privatetv/tags.yml in production.
+  tag_file: ""
   recursive: true
   follow_symlinks: false
   ignore_hidden_directories: true
@@ -69,6 +71,21 @@ program_blocks:
       title: "Der 20:15 Film"
       allowed_tags:
         - "movie"
+      denied_tags:
+        - "filler"
+      tag_match: "any"
+  blocks:
+    - enabled: false
+      start: "06:00"
+      duration: "02:30:00"
+      title: "PrivateTV Kinderzeit"
+      allowed_tags:
+        - "kids"
+      denied_tags:
+        - "nicht_fuer_kinder"
+      tag_match: "any"
+      # continue_current_mode keeps the legacy rotation if no matching material exists.
+      if_empty: "continue_current_mode"
   fillers:
     enabled: false
     directories: []
@@ -76,6 +93,10 @@ program_blocks:
     # distribution: anchor_bridge keeps patch-20 behavior; between_programmes spreads short ad/bumpers between films.
     distribution: "anchor_bridge"
     insert_between_movies: false
+    allowed_tags:
+      - "filler"
+    denied_tags:
+      - "movie"
     max_duration_seconds: 900
     max_consecutive_fillers: 3
     max_total_filler_block_seconds: 120

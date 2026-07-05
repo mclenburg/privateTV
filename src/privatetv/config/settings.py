@@ -50,6 +50,7 @@ class DvdSettings:
 @dataclass(frozen=True, slots=True)
 class MediaSettings:
     directories: tuple[Path, ...]
+    tag_file: Path | None = None
     recursive: bool = True
     follow_symlinks: bool = False
     ignore_hidden_directories: bool = True
@@ -90,6 +91,20 @@ class ProgramBlockAnchorSettings:
     time: str = "20:15"
     title: str = "Der 20:15 Film"
     allowed_tags: tuple[str, ...] = ()
+    denied_tags: tuple[str, ...] = ()
+    tag_match: str = "any"
+
+
+@dataclass(frozen=True, slots=True)
+class ProgramBlockSettings:
+    enabled: bool = False
+    start: str = "06:00"
+    duration_seconds: int = 9000
+    title: str = "PrivateTV Block"
+    allowed_tags: tuple[str, ...] = ()
+    denied_tags: tuple[str, ...] = ()
+    tag_match: str = "any"
+    if_empty: str = "continue_current_mode"
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,6 +118,8 @@ class GeneratedCountdownSettings:
 class FillerSettings:
     enabled: bool = False
     directories: tuple[Path, ...] = ()
+    allowed_tags: tuple[str, ...] = ()
+    denied_tags: tuple[str, ...] = ("movie",)
     max_duration_seconds: int = 900
     if_no_filler: str = "continue_current_mode"
     distribution: str = "anchor_bridge"
@@ -117,6 +134,7 @@ class FillerSettings:
 class ProgramBlocksSettings:
     enabled: bool = False
     anchors: tuple[ProgramBlockAnchorSettings, ...] = ()
+    blocks: tuple[ProgramBlockSettings, ...] = ()
     fillers: FillerSettings = field(default_factory=FillerSettings)
     generated_countdown: GeneratedCountdownSettings = field(default_factory=GeneratedCountdownSettings)
 
@@ -208,6 +226,7 @@ def settings_from_mapping(raw: dict) -> AppSettings:
         program_blocks=_program_blocks_from_mapping(program_blocks),
         media=MediaSettings(
             directories=directories,
+            tag_file=Path(media["tag_file"]) if media.get("tag_file") else None,
             recursive=bool(media.get("recursive", True)),
             follow_symlinks=bool(media.get("follow_symlinks", False)),
             ignore_hidden_directories=bool(media.get("ignore_hidden_directories", True)),
@@ -250,14 +269,18 @@ def settings_from_mapping(raw: dict) -> AppSettings:
 
 def _program_blocks_from_mapping(raw: dict) -> ProgramBlocksSettings:
     anchors = tuple(_program_anchor_from_mapping(item) for item in raw.get("anchors", []) or [])
+    blocks = tuple(_program_block_from_mapping(item) for item in raw.get("blocks", []) or [])
     fillers = raw.get("fillers", {}) or {}
     countdown = raw.get("generated_countdown", {}) or {}
     return ProgramBlocksSettings(
         enabled=bool(raw.get("enabled", False)),
         anchors=anchors,
+        blocks=blocks,
         fillers=FillerSettings(
             enabled=bool(fillers.get("enabled", False)),
             directories=tuple(Path(item) for item in fillers.get("directories", []) or []),
+            allowed_tags=tuple(_normalize_tag(item) for item in fillers.get("allowed_tags", []) or []),
+            denied_tags=tuple(_normalize_tag(item) for item in fillers.get("denied_tags", ["movie"]) or []),
             max_duration_seconds=int(fillers.get("max_duration_seconds", 900)),
             if_no_filler=str(fillers.get("if_no_filler", "continue_current_mode")),
             distribution=str(fillers.get("distribution", "anchor_bridge")),
@@ -280,8 +303,58 @@ def _program_anchor_from_mapping(raw: dict) -> ProgramBlockAnchorSettings:
         enabled=bool(raw.get("enabled", False)),
         time=str(raw.get("time", "20:15")),
         title=str(raw.get("title", "Der 20:15 Film")),
-        allowed_tags=tuple(str(item) for item in raw.get("allowed_tags", []) or []),
+        allowed_tags=tuple(_normalize_tag(item) for item in raw.get("allowed_tags", []) or []),
+        denied_tags=tuple(_normalize_tag(item) for item in raw.get("denied_tags", []) or []),
+        tag_match=str(raw.get("tag_match", "any")),
     )
+
+
+def _program_block_from_mapping(raw: dict) -> ProgramBlockSettings:
+    return ProgramBlockSettings(
+        enabled=bool(raw.get("enabled", False)),
+        start=str(raw.get("start", "06:00")),
+        duration_seconds=_parse_duration_seconds(raw.get("duration", raw.get("duration_seconds", "02:30:00"))),
+        title=str(raw.get("title", "PrivateTV Block")),
+        allowed_tags=tuple(_normalize_tag(item) for item in raw.get("allowed_tags", []) or []),
+        denied_tags=tuple(_normalize_tag(item) for item in raw.get("denied_tags", []) or []),
+        tag_match=str(raw.get("tag_match", "any")),
+        if_empty=str(raw.get("if_empty", "continue_current_mode")),
+    )
+
+
+def _parse_duration_seconds(value: object) -> int:
+    if isinstance(value, int):
+        return value
+    text = str(value).strip()
+    if text.isdigit():
+        return int(text)
+    parts = text.split(":")
+    try:
+        if len(parts) == 2:
+            hours = int(parts[0])
+            minutes = int(parts[1])
+            seconds = 0
+        elif len(parts) == 3:
+            hours = int(parts[0])
+            minutes = int(parts[1])
+            seconds = int(parts[2])
+        else:
+            raise ValueError
+    except ValueError as exc:
+        raise ConfigurationError(f"Invalid program block duration: {value}") from exc
+    if minutes > 59 or seconds > 59:
+        raise ConfigurationError(f"Invalid program block duration: {value}")
+    return hours * 3600 + minutes * 60 + seconds
+
+
+def _format_duration(seconds: int) -> str:
+    hours, remainder = divmod(seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
+def _normalize_tag(value: object) -> str:
+    return str(value).strip().lower().replace(" ", "_")
 
 
 def _normalize_extension(extension: str) -> str:
@@ -325,6 +398,18 @@ def _validate_settings(settings: AppSettings) -> None:
         raise ConfigurationError("program_blocks.generated_countdown.max_duration_seconds must be at least 1")
     if settings.program_blocks.generated_countdown.max_duration_seconds > 60:
         raise ConfigurationError("program_blocks.generated_countdown.max_duration_seconds must not be greater than 60")
+    for anchor in settings.program_blocks.anchors:
+        if anchor.tag_match not in {"any", "all"}:
+            raise ConfigurationError("program_blocks.anchors[].tag_match must be any or all")
+    for block in settings.program_blocks.blocks:
+        if block.tag_match not in {"any", "all"}:
+            raise ConfigurationError("program_blocks.blocks[].tag_match must be any or all")
+        if block.duration_seconds < 60:
+            raise ConfigurationError("program_blocks.blocks[].duration must be at least 60 seconds")
+        if block.duration_seconds > 24 * 3600:
+            raise ConfigurationError("program_blocks.blocks[].duration must not be greater than 24 hours")
+        if block.if_empty not in {"continue_current_mode", "skip_block"}:
+            raise ConfigurationError("program_blocks.blocks[].if_empty must be continue_current_mode or skip_block")
     if settings.program_blocks.fillers.max_duration_seconds < 1:
         raise ConfigurationError("program_blocks.fillers.max_duration_seconds must be at least 1")
     if settings.program_blocks.fillers.if_no_filler not in {"continue_current_mode", "start_anchor_late", "skip_anchor"}:
@@ -341,6 +426,8 @@ def _validate_settings(settings: AppSettings) -> None:
         raise ConfigurationError("program_blocks.fillers.min_gap_between_filler_blocks_minutes must not be negative")
     for anchor in settings.program_blocks.anchors:
         _validate_anchor_time(anchor.time)
+    for block in settings.program_blocks.blocks:
+        _validate_anchor_time(block.start)
     if not settings.streaming.output_container.strip():
         raise ConfigurationError("streaming.output_container must not be empty")
     _ = settings.schedule.zoneinfo
@@ -393,12 +480,29 @@ def settings_to_mapping(settings: AppSettings) -> dict:
                     "time": anchor.time,
                     "title": anchor.title,
                     "allowed_tags": list(anchor.allowed_tags),
+                    "denied_tags": list(anchor.denied_tags),
+                    "tag_match": anchor.tag_match,
                 }
                 for anchor in settings.program_blocks.anchors
+            ],
+            "blocks": [
+                {
+                    "enabled": block.enabled,
+                    "start": block.start,
+                    "duration": _format_duration(block.duration_seconds),
+                    "title": block.title,
+                    "allowed_tags": list(block.allowed_tags),
+                    "denied_tags": list(block.denied_tags),
+                    "tag_match": block.tag_match,
+                    "if_empty": block.if_empty,
+                }
+                for block in settings.program_blocks.blocks
             ],
             "fillers": {
                 "enabled": settings.program_blocks.fillers.enabled,
                 "directories": [str(directory) for directory in settings.program_blocks.fillers.directories],
+                "allowed_tags": list(settings.program_blocks.fillers.allowed_tags),
+                "denied_tags": list(settings.program_blocks.fillers.denied_tags),
                 "max_duration_seconds": settings.program_blocks.fillers.max_duration_seconds,
                 "if_no_filler": settings.program_blocks.fillers.if_no_filler,
                 "distribution": settings.program_blocks.fillers.distribution,
@@ -416,6 +520,7 @@ def settings_to_mapping(settings: AppSettings) -> dict:
         },
         "media": {
             "directories": [str(directory) for directory in settings.media.directories],
+            "tag_file": str(settings.media.tag_file) if settings.media.tag_file else "",
             "recursive": settings.media.recursive,
             "follow_symlinks": settings.media.follow_symlinks,
             "ignore_hidden_directories": settings.media.ignore_hidden_directories,

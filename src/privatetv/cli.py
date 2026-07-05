@@ -15,6 +15,7 @@ from privatetv.db import MediaRepository, ScheduleRepository, connect_database, 
 from privatetv.domain.models import MediaAsset, ScanStatus, SourceKind
 from privatetv.http import create_app
 from privatetv.media import DvdStructureScanner, FfprobeMediaProbe, LocalFileScanner
+from privatetv.media.tags import load_tag_rules, tags_for_media_item, validate_tag_rules
 from privatetv.schedule import ScheduleMaintainer, resolve_current_programme
 from privatetv.tvh import render_empty_xmltv, render_m3u, render_xmltv
 from privatetv.util.logging import configure_logging
@@ -42,6 +43,7 @@ def build_parser() -> argparse.ArgumentParser:
         "init-db",
         "scan",
         "list-media",
+        "list-tags",
         "schedule",
         "maintain-schedule",
         "current",
@@ -52,6 +54,8 @@ def build_parser() -> argparse.ArgumentParser:
     ):
         command = sub.add_parser(name)
         command.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+        if name == "list-media":
+            command.add_argument("--tag", help="Only list media items with this tag")
         command.set_defaults(func=globals()[f"cmd_{name.replace('-', '_')}"])
 
     spike_seek = sub.add_parser("spike-seek")
@@ -91,6 +95,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     ]
     for directory in settings.media.directories:
         checks.append((f"media directory: {directory}", directory.exists()))
+    if settings.media.tag_file is not None:
+        checks.append((f"tag file: {settings.media.tag_file}", settings.media.tag_file.exists()))
     if settings.program_blocks.enabled and settings.program_blocks.fillers.enabled:
         for directory in settings.program_blocks.fillers.directories:
             checks.append((f"filler directory: {directory}", directory.exists()))
@@ -99,6 +105,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     for name, ok in checks:
         print(f"{'OK' if ok else 'FAIL'}  {name}")
         failed = failed or not ok
+    if settings.media.tag_file is not None and settings.media.tag_file.exists():
+        for warning in validate_tag_rules(load_tag_rules(settings.media.tag_file)):
+            print(f"WARN {warning}")
     return 1 if failed else 0
 
 
@@ -113,6 +122,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
     settings = _load(args)
     initialize_database(settings.database.path)
     probe = FfprobeMediaProbe(settings.streaming.ffprobe_path)
+    tag_rules = load_tag_rules(settings.media.tag_file)
 
     source_kinds_to_mark_missing = {SourceKind.LOCAL_FILE, SourceKind.DVD_STRUCTURE}
     seen_by_kind: dict[SourceKind, set[str]] = {kind: set() for kind in source_kinds_to_mark_missing}
@@ -164,7 +174,8 @@ def cmd_scan(args: argparse.Namespace) -> int:
                 dvd_items += 1
 
             try:
-                repository.upsert_media_item(item, assets)
+                media_item_id = repository.upsert_media_item(item, assets)
+                repository.replace_media_tags(media_item_id, tags_for_media_item(item, tag_rules))
             except (UnicodeEncodeError, ValueError, OSError, sqlite3.Error) as exc:
                 failed_items += 1
                 upsert_errors.append(f"{_safe_text(item.source_uri)}: {exc}")
@@ -222,7 +233,7 @@ def cmd_list_media(args: argparse.Namespace) -> int:
     settings = _load(args)
     initialize_database(settings.database.path)
     with connect_database(settings.database.path) as connection:
-        items = MediaRepository(connection).list_media_items()
+        items = MediaRepository(connection).list_media_items(tag=getattr(args, "tag", None))
     if not items:
         print("No media items found. Run: privatetv scan")
         return 0
@@ -230,7 +241,21 @@ def cmd_list_media(args: argparse.Namespace) -> int:
         status = item.scan_status.value
         duration = _format_duration(item.duration_seconds)
         enabled = "enabled" if item.enabled else "disabled"
-        print(f"[{item.id}] {item.title} | {duration} | {status} | {enabled} | {item.source_uri}")
+        tags = ",".join(item.tags) if item.tags else "-"
+        print(f"[{item.id}] {item.title} | {duration} | {status} | {enabled} | tags={tags} | {item.source_uri}")
+    return 0
+
+
+def cmd_list_tags(args: argparse.Namespace) -> int:
+    settings = _load(args)
+    initialize_database(settings.database.path)
+    with connect_database(settings.database.path) as connection:
+        counts = MediaRepository(connection).list_tag_counts()
+    if not counts:
+        print("No tags found. Run: privatetv scan")
+        return 0
+    for tag, count in counts:
+        print(f"{tag:<24} {count}")
     return 0
 
 

@@ -6,6 +6,14 @@ from datetime import UTC, datetime
 
 from privatetv.domain.models import MediaAsset, MediaItem, ScanStatus, SourceKind
 
+_MEDIA_SELECT = """
+SELECT id, source_kind, source_uri, source_root, title, media_type,
+       duration_seconds, enabled, container, video_codec, audio_codec,
+       file_size_bytes, mtime, scan_status, scan_error,
+       (SELECT group_concat(tag, ',') FROM media_tag WHERE media_tag.media_item_id = media_item.id) AS tags_csv
+FROM media_item
+"""
+
 
 class MediaRepository:
     def __init__(self, connection: sqlite3.Connection) -> None:
@@ -76,6 +84,14 @@ class MediaRepository:
             )
         return media_item_id
 
+    def replace_media_tags(self, media_item_id: int, tags: Iterable[str], *, source: str = "scan") -> None:
+        normalized = sorted({str(tag).strip().lower().replace(" ", "_") for tag in tags if str(tag).strip()})
+        self._connection.execute("DELETE FROM media_tag WHERE media_item_id = ?", (media_item_id,))
+        self._connection.executemany(
+            "INSERT INTO media_tag(media_item_id, tag, source) VALUES (?, ?, ?)",
+            [(media_item_id, tag, source) for tag in normalized],
+        )
+
     def get_media_item_id(self, source_kind: SourceKind, source_uri: str) -> int | None:
         row = self._connection.execute(
             "SELECT id FROM media_item WHERE source_kind = ? AND source_uri = ?",
@@ -100,26 +116,26 @@ class MediaRepository:
             )
         return len(missing)
 
-    def list_media_items(self) -> list[MediaItem]:
+    def list_media_items(self, *, tag: str | None = None) -> list[MediaItem]:
+        where = ""
+        params: tuple[object, ...] = ()
+        if tag:
+            where = "WHERE EXISTS (SELECT 1 FROM media_tag mt WHERE mt.media_item_id = media_item.id AND mt.tag = ?)"
+            params = (tag.strip().lower().replace(" ", "_"),)
         rows = self._connection.execute(
-            """
-            SELECT id, source_kind, source_uri, source_root, title, media_type,
-                   duration_seconds, enabled, container, video_codec, audio_codec,
-                   file_size_bytes, mtime, scan_status, scan_error
-            FROM media_item
+            f"""
+            {_MEDIA_SELECT}
+            {where}
             ORDER BY title COLLATE NOCASE, id
-            """
+            """,
+            params,
         ).fetchall()
         return [media_item_from_row(row) for row in rows]
 
-
     def list_playable_media_items(self) -> list[MediaItem]:
         rows = self._connection.execute(
-            """
-            SELECT id, source_kind, source_uri, source_root, title, media_type,
-                   duration_seconds, enabled, container, video_codec, audio_codec,
-                   file_size_bytes, mtime, scan_status, scan_error
-            FROM media_item
+            f"""
+            {_MEDIA_SELECT}
             WHERE enabled = 1
               AND scan_status = ?
               AND source_kind IN (?, ?, ?)
@@ -129,6 +145,17 @@ class MediaRepository:
             (ScanStatus.OK.value, SourceKind.LOCAL_FILE.value, SourceKind.DVD_STRUCTURE.value, SourceKind.GENERATED.value),
         ).fetchall()
         return [media_item_from_row(row) for row in rows]
+
+    def list_tag_counts(self) -> list[tuple[str, int]]:
+        rows = self._connection.execute(
+            """
+            SELECT tag, COUNT(*) AS count
+            FROM media_tag
+            GROUP BY tag
+            ORDER BY tag COLLATE NOCASE
+            """
+        ).fetchall()
+        return [(str(row["tag"]), int(row["count"])) for row in rows]
 
     def list_assets(self, media_item_id: int) -> list[MediaAsset]:
         rows = self._connection.execute(
@@ -146,6 +173,9 @@ class MediaRepository:
 def media_item_from_row(row: sqlite3.Row) -> MediaItem:
     from pathlib import Path
 
+    keys = set(row.keys())
+    tags_csv = row["tags_csv"] if "tags_csv" in keys else None
+    tags = tuple(sorted({tag for tag in str(tags_csv or "").split(",") if tag}))
     return MediaItem(
         id=int(row["id"]),
         source_kind=SourceKind(str(row["source_kind"])),
@@ -162,6 +192,7 @@ def media_item_from_row(row: sqlite3.Row) -> MediaItem:
         mtime=row["mtime"],
         scan_status=ScanStatus(str(row["scan_status"])),
         scan_error=row["scan_error"],
+        tags=tags,
     )
 
 

@@ -8,6 +8,7 @@ from pathlib import Path
 from privatetv.config import AppSettings
 from privatetv.db.media_repository import MediaRepository
 from privatetv.domain.models import MediaAsset, MediaItem, ScanStatus, SourceKind
+from privatetv.media.tags import tags_for_media_item
 
 LOGGER = logging.getLogger(__name__)
 COUNTDOWN_DURATION_SECONDS = 60
@@ -58,7 +59,10 @@ def ensure_generated_countdown_media(connection, settings: AppSettings) -> int |
         role="primary",
         file_size_bytes=output_path.stat().st_size if output_path.exists() else None,
     )
-    return MediaRepository(connection).upsert_media_item(item, [asset])
+    repository = MediaRepository(connection)
+    media_item_id = repository.upsert_media_item(item, [asset])
+    repository.replace_media_tags(media_item_id, tags_for_media_item(item))
+    return media_item_id
 
 
 def countdown_clip_path(settings: AppSettings) -> Path:

@@ -1,0 +1,37 @@
+version: 1
+
+directory_tags:
+  "/data/Filme/Kinder":
+    - kids
+    - family
+
+  "/data/Filme/SimsalaGrimm":
+    - kids
+    - series
+    - fairy_tale
+
+  "/data/Filme/Buddy&Terence":
+    - movie
+    - comedy
+    - bud_spencer
+
+  "/data/PrivateTV/Werbung":
+    - filler
+    - commercial
+    - retro
+
+  "/data/PrivateTV/Bumper":
+    - filler
+    - bumper
+
+  "/data/PrivateTV/DVD-Vorschauen":
+    - filler
+    - trailer
+
+file_tags:
+  "/data/Filme/Buddy&Terence/2_Himmelhunde_auf_dem_Weg_zur_Hoelle.mp4":
+    add:
+      - late
+      - comedy
+    remove:
+      - kids

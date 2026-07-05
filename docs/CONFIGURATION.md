@@ -90,6 +90,17 @@ program_blocks:
       title: "Der 20:15 Film"
       allowed_tags:
         - "movie"
+  blocks:
+    - enabled: false
+      start: "06:00"
+      duration: "02:30:00"
+      title: "PrivateTV Kinderzeit"
+      allowed_tags:
+        - "kids"
+      denied_tags:
+        - "nicht_fuer_kinder"
+      tag_match: "any"
+      if_empty: "continue_current_mode"
   fillers:
     enabled: false
     directories: []
@@ -218,6 +229,50 @@ program_blocks:
 
 When disabled, PrivateTV behaves like the original continuous scheduler: one normal media item follows the next.
 
+
+### Time blocks
+
+Patch 25 adds real time blocks. A block is a daily time window during which PrivateTV prefers media with matching tags. This is useful for broad slots such as kids' programming without having to over-classify every film.
+
+Example:
+
+```yaml
+program_blocks:
+  enabled: true
+  blocks:
+    - enabled: true
+      start: "06:00"
+      duration: "02:30:00"
+      title: "PrivateTV Kinderzeit"
+      allowed_tags:
+        - "kids"
+      denied_tags:
+        - "nicht_fuer_kinder"
+      tag_match: "any"
+      if_empty: "continue_current_mode"
+
+    - enabled: true
+      start: "22:30"
+      duration: "03:00:00"
+      title: "Spätprogramm"
+      allowed_tags:
+        - "late"
+        - "movie"
+      denied_tags:
+        - "kids"
+      tag_match: "any"
+      if_empty: "continue_current_mode"
+```
+
+Rules:
+
+- Blocks are optional. With no enabled blocks, existing scheduling behavior is unchanged.
+- A block does not require highly granular tags. Use broad tags such as `kids`, `family`, `late`, `movie`, `retro` or `commercial`.
+- Inside a block, PrivateTV prefers matching media and tries to pick items that fit before the block ends.
+- Before an upcoming block, PrivateTV avoids starting a long normal item when a shorter one can fit before the block start.
+- If no matching media exists and `if_empty: "continue_current_mode"`, PrivateTV falls back to the normal rotation instead of failing.
+- Anchors, such as `20:15`, remain fixed points. Blocks are wider time windows.
+
 ### 20:15 anchor with countdown and fillers
 
 Example:
@@ -285,3 +340,86 @@ logging:
 
 Use `DEBUG` only temporarily. Scans and streams can become noisy.
 
+
+## Media tags
+
+PrivateTV can assign tags during `privatetv scan`. Tags are stored in the SQLite database and can be used by programme anchors and filler rules.
+
+In `/etc/privatetv/config.yml`:
+
+```yaml
+media:
+  directories:
+    - "/data/Filme"
+    - "/data/DVDs"
+  tag_file: "/etc/privatetv/tags.yml"
+```
+
+Example `/etc/privatetv/tags.yml`:
+
+```yaml
+version: 1
+
+directory_tags:
+  "/data/Filme/Kinder":
+    - kids
+    - family
+
+  "/data/Filme/SimsalaGrimm":
+    - kids
+    - series
+    - fairy_tale
+
+  "/data/PrivateTV/Werbung":
+    - filler
+    - commercial
+    - retro
+
+file_tags:
+  "/data/Filme/Buddy&Terence/2_Himmelhunde_auf_dem_Weg_zur_Hoelle.mp4":
+    add:
+      - late
+      - comedy
+    remove:
+      - kids
+```
+
+After changing tags, run:
+
+```bash
+privatetv scan --config /etc/privatetv/config.yml
+```
+
+Inspect tags:
+
+```bash
+privatetv list-tags --config /etc/privatetv/config.yml
+privatetv list-media --tag kids --config /etc/privatetv/config.yml
+```
+
+Anchors can filter by tags:
+
+```yaml
+program_blocks:
+  enabled: true
+  anchors:
+    - enabled: true
+      time: "06:00"
+      title: "Kinderprogramm"
+      allowed_tags:
+        - kids
+      denied_tags:
+        - filler
+      tag_match: "any"
+
+    - enabled: true
+      time: "20:15"
+      title: "Der 20:15 Film"
+      allowed_tags:
+        - movie
+      denied_tags:
+        - filler
+        - kids
+```
+
+`tag_match: "any"` means at least one allowed tag must match. `tag_match: "all"` requires all allowed tags.

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
 
-from privatetv.config import AppSettings, ProgramBlockAnchorSettings
+from privatetv.config import AppSettings, ProgramBlockAnchorSettings, ProgramBlockSettings
 from privatetv.domain.models import MediaItem, ScheduleEntry, SourceKind
 from privatetv.schedule.countdown import COUNTDOWN_DURATION_SECONDS
 from privatetv.schedule.strategy import create_schedule_strategy
@@ -46,7 +46,7 @@ class ScheduleBuilder:
         filler_candidates = [
             item
             for item in media_items
-            if _is_schedulable_filler_item(item, self._settings.program_blocks.fillers.max_duration_seconds)
+            if _is_schedulable_filler_item(item, self._settings.program_blocks.fillers.max_duration_seconds, self._settings.program_blocks.fillers.allowed_tags, self._settings.program_blocks.fillers.denied_tags)
         ]
         countdown_item = _countdown_item(media_items)
         strategy = create_schedule_strategy(
@@ -70,8 +70,21 @@ class ScheduleBuilder:
                 if current >= target_end:
                     break
 
-                item = self._choose_item_for_anchor_window(
+                active_anchor = _anchor_at(self._settings.program_blocks.anchors, current)
+                active_block = _active_block_at(self._settings.program_blocks.blocks, current)
+                if active_anchor is not None:
+                    preferred_item = _first_matching_anchor_item(ordered, active_anchor) or preferred_item
+                elif active_block is not None:
+                    preferred_item = _first_matching_block_item(ordered, active_block) or preferred_item
+
+                item = self._choose_item_for_program_block_window(
                     preferred_item=preferred_item,
+                    candidates=ordered,
+                    start_at=current,
+                    target_end=target_end,
+                )
+                item = self._choose_item_for_anchor_window(
+                    preferred_item=item,
                     candidates=ordered,
                     start_at=current,
                     target_end=target_end,
@@ -93,6 +106,12 @@ class ScheduleBuilder:
                     last_filler_block_end = current
                     if current >= target_end:
                         break
+                    active_anchor = _anchor_at(self._settings.program_blocks.anchors, current)
+                    active_block = _active_block_at(self._settings.program_blocks.blocks, current)
+                    if active_anchor is not None:
+                        item = _first_matching_anchor_item(ordered, active_anchor) or item
+                    elif active_block is not None:
+                        item = _first_matching_block_item(ordered, active_block) or item
 
                 duration = timedelta(seconds=float(item.duration_seconds))
                 stop = current + duration
@@ -114,6 +133,49 @@ class ScheduleBuilder:
                     last_filler_block_end = current
         return ScheduleBuildResult(entries, start_at, target_end)
 
+    def _choose_item_for_program_block_window(
+        self,
+        *,
+        preferred_item: MediaItem,
+        candidates: list[MediaItem],
+        start_at: datetime,
+        target_end: datetime,
+    ) -> MediaItem:
+        if not self._settings.program_blocks.enabled:
+            return preferred_item
+
+        active_block_info = _active_block_info(self._settings.program_blocks.blocks, start_at)
+        if active_block_info is not None:
+            block, _block_start, block_end = active_block_info
+            block_candidates = [item for item in candidates if _matches_block_tags(item, block)]
+            if not block_candidates:
+                return preferred_item if block.if_empty == "continue_current_mode" else preferred_item
+            if _matches_block_tags(preferred_item, block):
+                preferred_stop = start_at + timedelta(seconds=float(preferred_item.duration_seconds))
+                if preferred_stop <= block_end:
+                    return preferred_item
+            remaining = max(0.0, (block_end - start_at).total_seconds())
+            fitting = [item for item in block_candidates if item.duration_seconds <= remaining]
+            if fitting:
+                return max(fitting, key=lambda item: (item.duration_seconds, item.title.lower(), int(item.id or 0)))
+            return min(block_candidates, key=lambda item: (item.duration_seconds, item.title.lower(), int(item.id or 0)))
+
+        next_block_info = _next_block_start_info(self._settings.program_blocks.blocks, start_at, target_end)
+        if next_block_info is None:
+            return preferred_item
+        _block, block_start = next_block_info
+        gap_seconds = max(0.0, (block_start - start_at).total_seconds())
+        normal_candidates = [item for item in candidates if item.duration_seconds <= gap_seconds]
+        non_block_candidates = [item for item in normal_candidates if not _matches_block_tags(item, _block)]
+        preferred_stop = start_at + timedelta(seconds=float(preferred_item.duration_seconds))
+        if preferred_stop <= block_start and (not _matches_block_tags(preferred_item, _block) or not non_block_candidates):
+            return preferred_item
+        if not normal_candidates:
+            return _first_matching_block_item(candidates, _block) or preferred_item
+        pool = non_block_candidates or normal_candidates
+        return max(pool, key=lambda item: (item.duration_seconds, item.title.lower(), int(item.id or 0)))
+
+
     def _choose_item_for_anchor_window(
         self,
         *,
@@ -123,20 +185,22 @@ class ScheduleBuilder:
         target_end: datetime,
         countdown_item: MediaItem | None,
     ) -> MediaItem:
-        if not _between_programmes_enabled(self._settings):
+        if not self._settings.program_blocks.enabled:
             return preferred_item
-        anchor_time = _next_anchor_datetime(self._settings.program_blocks.anchors, start_at, target_end)
-        if anchor_time is None:
+        anchor_info = _next_anchor_info(self._settings.program_blocks.anchors, start_at, target_end)
+        if anchor_info is None:
             return preferred_item
-        if start_at + timedelta(seconds=float(preferred_item.duration_seconds)) <= anchor_time:
+        anchor, anchor_time = anchor_info
+        anchor_candidates = [item for item in candidates if _matches_anchor_tags(item, anchor)] or candidates
+        if start_at + timedelta(seconds=float(preferred_item.duration_seconds)) <= anchor_time and _matches_anchor_tags(preferred_item, anchor):
             return preferred_item
 
         max_countdown = self._settings.program_blocks.generated_countdown.max_duration_seconds if countdown_item else 0
         gap_seconds = (anchor_time - start_at).total_seconds()
         reserve = min(max_countdown, max(0, gap_seconds))
-        fitting = [item for item in candidates if item.duration_seconds <= max(0.0, gap_seconds - reserve)]
+        fitting = [item for item in anchor_candidates if item.duration_seconds <= max(0.0, gap_seconds - reserve)]
         if not fitting and countdown_item is not None:
-            fitting = [item for item in candidates if item.duration_seconds <= gap_seconds]
+            fitting = [item for item in anchor_candidates if item.duration_seconds <= gap_seconds]
         if not fitting:
             return preferred_item
         return max(fitting, key=lambda item: (item.duration_seconds, item.title.lower(), int(item.id or 0)))
@@ -154,9 +218,10 @@ class ScheduleBuilder:
         fillers = self._settings.program_blocks.fillers
         if not (_between_programmes_enabled(self._settings) and fillers.insert_between_movies and filler_candidates):
             return []
-        anchor_time = _next_anchor_datetime(self._settings.program_blocks.anchors, start_at, target_end)
-        if anchor_time is None:
+        anchor_info = _next_anchor_info(self._settings.program_blocks.anchors, start_at, target_end)
+        if anchor_info is None:
             return []
+        _anchor, anchor_time = anchor_info
         minutes_since_last_break = (start_at - last_filler_block_end).total_seconds() / 60
         if minutes_since_last_break < fillers.prefer_filler_after_minutes:
             return []
@@ -339,13 +404,19 @@ def _is_schedulable_normal_item(item: MediaItem) -> bool:
     )
 
 
-def _is_schedulable_filler_item(item: MediaItem, max_duration_seconds: int) -> bool:
+def _is_schedulable_filler_item(
+    item: MediaItem,
+    max_duration_seconds: int,
+    allowed_tags: tuple[str, ...] = (),
+    denied_tags: tuple[str, ...] = (),
+) -> bool:
     return (
         item.id is not None
         and item.enabled
         and item.duration_seconds > 0
         and item.media_type in FILLER_MEDIA_TYPES
         and item.duration_seconds <= max_duration_seconds
+        and _matches_tags(item.tags, allowed_tags=allowed_tags, denied_tags=denied_tags, match="any")
     )
 
 
@@ -381,13 +452,22 @@ def _next_anchor_datetime(
     now: datetime,
     target_end: datetime,
 ) -> datetime | None:
+    info = _next_anchor_info(anchors, now, target_end)
+    return info[1] if info is not None else None
+
+
+def _next_anchor_info(
+    anchors: tuple[ProgramBlockAnchorSettings, ...],
+    now: datetime,
+    target_end: datetime,
+) -> tuple[ProgramBlockAnchorSettings, datetime] | None:
     anchor = _next_enabled_anchor(anchors, now)
     if anchor is None:
         return None
     value = _anchor_datetime(now, anchor.time)
     if value > target_end:
         return None
-    return value
+    return anchor, value
 
 
 def _next_enabled_anchor(
@@ -400,12 +480,115 @@ def _next_enabled_anchor(
     return min(enabled, key=lambda anchor: _anchor_datetime(now, anchor.time))
 
 
+def _anchor_at(anchors: tuple[ProgramBlockAnchorSettings, ...], moment: datetime) -> ProgramBlockAnchorSettings | None:
+    hhmm = f"{moment.hour:02d}:{moment.minute:02d}"
+    for anchor in anchors:
+        if anchor.enabled and anchor.time == hhmm:
+            return anchor
+    return None
+
+
+def _active_block_at(blocks: tuple[ProgramBlockSettings, ...], moment: datetime) -> ProgramBlockSettings | None:
+    info = _active_block_info(blocks, moment)
+    return info[0] if info is not None else None
+
+
+def _active_block_info(
+    blocks: tuple[ProgramBlockSettings, ...], moment: datetime
+) -> tuple[ProgramBlockSettings, datetime, datetime] | None:
+    active: list[tuple[ProgramBlockSettings, datetime, datetime]] = []
+    for block in blocks:
+        if not block.enabled:
+            continue
+        start = _block_start_datetime(moment, block.start)
+        end = start + timedelta(seconds=block.duration_seconds)
+        if start <= moment < end:
+            active.append((block, start, end))
+    if not active:
+        return None
+    # Prefer the most recently started block when definitions overlap.
+    return max(active, key=lambda item: item[1])
+
+
+def _next_block_start_info(
+    blocks: tuple[ProgramBlockSettings, ...], now: datetime, target_end: datetime
+) -> tuple[ProgramBlockSettings, datetime] | None:
+    upcoming: list[tuple[ProgramBlockSettings, datetime]] = []
+    for block in blocks:
+        if not block.enabled:
+            continue
+        start = _anchor_datetime(now, block.start)
+        if now < start <= target_end:
+            upcoming.append((block, start))
+    if not upcoming:
+        return None
+    return min(upcoming, key=lambda item: item[1])
+
+
+def _block_start_datetime(moment: datetime, value: str) -> datetime:
+    start = _anchor_datetime(moment, value)
+    if start > moment:
+        previous = start - timedelta(days=1)
+        return previous
+    return start
+
+
+def _first_matching_anchor_item(items: list[MediaItem], anchor: ProgramBlockAnchorSettings) -> MediaItem | None:
+    for item in items:
+        if _matches_anchor_tags(item, anchor):
+            return item
+    return None
+
+
+def _first_matching_block_item(items: list[MediaItem], block: ProgramBlockSettings) -> MediaItem | None:
+    for item in items:
+        if _matches_block_tags(item, block):
+            return item
+    return None
+
+
 def _anchor_datetime(now: datetime, value: str) -> datetime:
     hour, minute = (int(part) for part in value.split(":"))
     candidate = datetime.combine(now.date(), time(hour=hour, minute=minute), tzinfo=now.tzinfo)
     if candidate <= now:
         candidate += timedelta(days=1)
     return candidate
+
+
+def _matches_anchor_tags(item: MediaItem, anchor: ProgramBlockAnchorSettings) -> bool:
+    return _matches_tags(
+        item.tags,
+        allowed_tags=anchor.allowed_tags,
+        denied_tags=anchor.denied_tags,
+        match=anchor.tag_match,
+    )
+
+
+def _matches_block_tags(item: MediaItem, block: ProgramBlockSettings) -> bool:
+    return _matches_tags(
+        item.tags,
+        allowed_tags=block.allowed_tags,
+        denied_tags=block.denied_tags,
+        match=block.tag_match,
+    )
+
+
+def _matches_tags(
+    item_tags: tuple[str, ...],
+    *,
+    allowed_tags: tuple[str, ...],
+    denied_tags: tuple[str, ...],
+    match: str,
+) -> bool:
+    tag_set = set(item_tags)
+    if denied_tags and tag_set.intersection(denied_tags):
+        return False
+    if not allowed_tags:
+        return True
+    allowed_set = set(allowed_tags)
+    if match == "all":
+        return allowed_set.issubset(tag_set)
+    return bool(tag_set.intersection(allowed_set))
 
 
 def _description_for(item: MediaItem) -> str:

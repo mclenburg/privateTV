@@ -38,6 +38,17 @@ CREATE TABLE IF NOT EXISTS media_asset (
     UNIQUE(media_item_id, asset_order)
 );
 
+CREATE TABLE IF NOT EXISTS media_tag (
+    media_item_id INTEGER NOT NULL,
+    tag TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'scan',
+    FOREIGN KEY(media_item_id) REFERENCES media_item(id) ON DELETE CASCADE,
+    PRIMARY KEY(media_item_id, tag)
+);
+
+CREATE INDEX IF NOT EXISTS idx_media_tag_tag
+ON media_tag(tag, media_item_id);
+
 CREATE TABLE IF NOT EXISTS schedule_entry (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     channel_id TEXT NOT NULL,

@@ -168,7 +168,7 @@ PrivateTV scans all configured media directories recursively. Subdirectories do 
 
 ### Optional program blocks, fillers, and countdowns
 
-PrivateTV uses the continuous legacy scheduler by default: one enabled media item follows the next one and no filler clips are required. Program blocks are disabled by default. When enabled, PrivateTV can bridge the gap before an anchor such as 20:15 with short local filler clips and then use the generated countdown only for the final fine adjustment.
+PrivateTV uses the continuous legacy scheduler by default: one enabled media item follows the next one and no filler clips are required. Program blocks are disabled by default. When enabled, PrivateTV can use daily time windows, such as a 2.5 hour kids block, fixed anchors such as 20:15, short local filler clips, and a generated countdown only for final fine adjustment.
 
 ```yaml
 program_blocks:
@@ -179,6 +179,16 @@ program_blocks:
       title: "Der 20:15 Film"
       allowed_tags:
         - "movie"
+  blocks:
+    - enabled: false
+      start: "06:00"
+      duration: "02:30:00"
+      title: "PrivateTV Kinderzeit"
+      allowed_tags:
+        - "kids"
+      denied_tags:
+        - "nicht_fuer_kinder"
+      if_empty: "continue_current_mode"
   fillers:
     enabled: false
     directories:
@@ -199,7 +209,7 @@ program_blocks:
     title: "Gleich geht's weiter"
 ```
 
-Generated countdowns are intentionally limited to at most 60 seconds. Longer gaps must be filled by normal programming or configured filler media, not by an endless countdown. Filler directories are scanned as short local clips with `media_type: filler`; they are not scheduled as normal movies. `distribution: "anchor_bridge"` keeps the simple bridge-before-anchor behavior. `distribution: "between_programmes"` with `insert_between_movies: true` lets PrivateTV place short ad/bumper/trailer blocks between normal programmes, bounded by `max_consecutive_fillers` and `max_total_filler_block_seconds`, so old commercials or DVD previews do not pile up as one long wall before 20:15.
+Time blocks use broad tags, not a rigid genre taxonomy. A film can have several tags, and blocks should normally use general labels such as `kids`, `family`, `late`, or `movie` so there is enough material for each slot. Generated countdowns are intentionally limited to at most 60 seconds. Longer gaps must be filled by normal programming or configured filler media, not by an endless countdown. Filler directories are scanned as short local clips with `media_type: filler`; they are not scheduled as normal movies. `distribution: "anchor_bridge"` keeps the simple bridge-before-anchor behavior. `distribution: "between_programmes"` with `insert_between_movies: true` lets PrivateTV place short ad/bumper/trailer blocks between normal programmes, bounded by `max_consecutive_fillers` and `max_total_filler_block_seconds`, so old commercials or DVD previews do not pile up as one long wall before 20:15.
 
 ## Test fixtures
 
@@ -348,3 +358,14 @@ privatetv spike-tvh-upstream --host 0.0.0.0 --port 9998
 `spike-tvh-upstream` starts a small probe server so you can verify whether tvheadend opens one or multiple upstream connections when several clients watch the same IPTV channel.
 
 Logo overlays inside the actual video stream are intentionally not enabled by default. Overlaying a channel logo would force video filtering and re-encoding, which would defeat the current low-overhead stream-copy design and reduce the number of reliable parallel streams on a Raspberry Pi.
+
+### Media tags
+
+Optional media tags can be configured with `media.tag_file`, for example `/etc/privatetv/tags.yml`. Directory and file rules can mark media as `kids`, `late`, `commercial`, `bumper`, `trailer`, etc. Use:
+
+```bash
+privatetv list-tags --config /etc/privatetv/config.yml
+privatetv list-media --tag kids --config /etc/privatetv/config.yml
+```
+
+See `docs/CONFIGURATION.md` and `config/tags.example.yml`.

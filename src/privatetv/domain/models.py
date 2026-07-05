@@ -37,6 +37,7 @@ class MediaItem:
     mtime: int | None = None
     scan_status: ScanStatus = ScanStatus.OK
     scan_error: str | None = None
+    tags: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
