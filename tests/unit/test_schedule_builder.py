@@ -377,3 +377,56 @@ def test_schedule_builder_uses_fitting_item_before_upcoming_block() -> None:
     assert result.entries[0].title == "Short Feature"
     assert result.entries[0].end_time <= datetime(2026, 1, 15, 6, 0, tzinfo=zone)
     assert result.entries[1].title == "Kids Episode"
+
+
+def _settings_with_skip_empty_kids_block():
+    raw = {
+        "server": {"host": "127.0.0.1", "port": 9988, "public_base_url": "http://127.0.0.1:9988"},
+        "channel": {"id": "privatetv", "name": "PrivateTV"},
+        "program_blocks": {
+            "enabled": True,
+            "blocks": [
+                {
+                    "enabled": True,
+                    "start": "06:00",
+                    "duration": "02:30:00",
+                    "title": "PrivateTV Kinderzeit",
+                    "allowed_tags": ["kids"],
+                    "if_empty": "skip_block",
+                }
+            ],
+        },
+        "media": {"directories": ["tests/fixtures/media"]},
+        "schedule": {"days_ahead": 5, "timezone": "Europe/Berlin", "rebuild_hour": 3, "strategy": "alphabetical"},
+        "streaming": {"max_parallel_streams": 4, "output_container": "mpegts", "prefer_stream_copy": True, "transcode_when_needed": False, "ffmpeg_path": "/usr/bin/ffmpeg", "ffprobe_path": "/usr/bin/ffprobe"},
+        "database": {"path": ":memory:"},
+    }
+    return settings_from_mapping(raw)
+
+
+def test_schedule_builder_skips_empty_time_block_when_configured() -> None:
+    settings = _settings_with_skip_empty_kids_block()
+    zone = ZoneInfo("Europe/Berlin")
+    start = datetime(2026, 1, 15, 6, 0, tzinfo=zone)
+    end = datetime(2026, 1, 15, 9, 0, tzinfo=zone)
+    items = [_tagged_item(1, "Action Movie", 1800, "movie")]
+
+    result = ScheduleBuilder(settings).build(items, start_at=start, end_at=end)
+
+    assert result.entries
+    assert result.entries[0].title == "Action Movie"
+    assert result.entries[0].start_time == datetime(2026, 1, 15, 8, 30, tzinfo=zone)
+
+
+def test_schedule_builder_keeps_empty_time_block_when_continue_current_mode() -> None:
+    settings = _settings_with_kids_block()
+    zone = ZoneInfo("Europe/Berlin")
+    start = datetime(2026, 1, 15, 6, 0, tzinfo=zone)
+    end = datetime(2026, 1, 15, 7, 0, tzinfo=zone)
+    items = [_tagged_item(1, "Action Movie", 1800, "movie")]
+
+    result = ScheduleBuilder(settings).build(items, start_at=start, end_at=end)
+
+    assert result.entries
+    assert result.entries[0].title == "Action Movie"
+    assert result.entries[0].start_time == start

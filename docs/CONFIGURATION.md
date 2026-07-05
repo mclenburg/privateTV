@@ -423,3 +423,25 @@ program_blocks:
 ```
 
 `tag_match: "any"` means at least one allowed tag must match. `tag_match: "all"` requires all allowed tags.
+
+
+## Program block empty behavior
+
+For `program_blocks.blocks[]`, `if_empty` controls what happens when no media item matches the block's tag rules.
+
+```yaml
+program_blocks:
+  blocks:
+    - enabled: true
+      start: "06:00"
+      duration: "02:30:00"
+      title: "PrivateTV Kinderzeit"
+      allowed_tags:
+        - "kids"
+      if_empty: "continue_current_mode"
+```
+
+Supported values:
+
+- `continue_current_mode`: keep the channel continuous and schedule normal rotation when the block has no matching media.
+- `skip_block`: do not schedule unrelated media inside the block window. This can intentionally create an EPG/stream gap for that block.

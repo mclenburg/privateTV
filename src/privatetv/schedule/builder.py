@@ -70,6 +70,17 @@ class ScheduleBuilder:
                 if current >= target_end:
                     break
 
+                skip_until = self._skip_empty_program_block_until(
+                    candidates=ordered,
+                    start_at=current,
+                    target_end=target_end,
+                )
+                if skip_until is not None:
+                    current = skip_until
+                    if current >= target_end:
+                        break
+                    continue
+
                 active_anchor = _anchor_at(self._settings.program_blocks.anchors, current)
                 active_block = _active_block_at(self._settings.program_blocks.blocks, current)
                 if active_anchor is not None:
@@ -133,6 +144,25 @@ class ScheduleBuilder:
                     last_filler_block_end = current
         return ScheduleBuildResult(entries, start_at, target_end)
 
+    def _skip_empty_program_block_until(
+        self,
+        *,
+        candidates: list[MediaItem],
+        start_at: datetime,
+        target_end: datetime,
+    ) -> datetime | None:
+        if not self._settings.program_blocks.enabled:
+            return None
+        active_block_info = _active_block_info(self._settings.program_blocks.blocks, start_at)
+        if active_block_info is None:
+            return None
+        block, _block_start, block_end = active_block_info
+        if block.if_empty != "skip_block":
+            return None
+        if any(_matches_block_tags(item, block) for item in candidates):
+            return None
+        return min(block_end, target_end)
+
     def _choose_item_for_program_block_window(
         self,
         *,
@@ -149,7 +179,7 @@ class ScheduleBuilder:
             block, _block_start, block_end = active_block_info
             block_candidates = [item for item in candidates if _matches_block_tags(item, block)]
             if not block_candidates:
-                return preferred_item if block.if_empty == "continue_current_mode" else preferred_item
+                return preferred_item
             if _matches_block_tags(preferred_item, block):
                 preferred_stop = start_at + timedelta(seconds=float(preferred_item.duration_seconds))
                 if preferred_stop <= block_end:
