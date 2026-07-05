@@ -114,3 +114,23 @@ def test_scanner_stores_absolute_asset_paths_for_relative_media_root(
     assert Path(item.source_root).is_absolute()
     assert assets[0].path.is_absolute()
     assert assets[0].path == (media_root / "movie.mp4").resolve()
+
+
+def test_scanner_can_mark_configured_directory_as_filler(tmp_path: Path) -> None:
+    filler_root = tmp_path / "filler"
+    filler_root.mkdir()
+    (filler_root / "coming_up.mp4").write_bytes(b"movie")
+    settings = _settings(tmp_path)
+
+    items = LocalFileScanner(
+        settings,
+        FakeProbe(),
+        directories=(filler_root,),
+        media_type="filler",
+        progress_kind="filler",
+    ).scan()
+
+    assert len(items) == 1
+    item, _assets = items[0]
+    assert item.media_type == "filler"
+    assert item.title == "coming up"

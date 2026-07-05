@@ -82,6 +82,39 @@ class ScheduleSettings:
             raise ConfigurationError(f"Unknown timezone: {self.timezone}") from exc
 
 
+
+
+@dataclass(frozen=True, slots=True)
+class ProgramBlockAnchorSettings:
+    enabled: bool = False
+    time: str = "20:15"
+    title: str = "Der 20:15 Film"
+    allowed_tags: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class GeneratedCountdownSettings:
+    enabled: bool = False
+    max_duration_seconds: int = 60
+    title: str = "Gleich geht's weiter"
+
+
+@dataclass(frozen=True, slots=True)
+class FillerSettings:
+    enabled: bool = False
+    directories: tuple[Path, ...] = ()
+    max_duration_seconds: int = 900
+    if_no_filler: str = "continue_current_mode"
+
+
+@dataclass(frozen=True, slots=True)
+class ProgramBlocksSettings:
+    enabled: bool = False
+    anchors: tuple[ProgramBlockAnchorSettings, ...] = ()
+    fillers: FillerSettings = field(default_factory=FillerSettings)
+    generated_countdown: GeneratedCountdownSettings = field(default_factory=GeneratedCountdownSettings)
+
+
 @dataclass(frozen=True, slots=True)
 class StreamingSettings:
     max_parallel_streams: int
@@ -113,6 +146,7 @@ class AppSettings:
     database: DatabaseSettings
     logging: LoggingSettings
     hazard_channel: HazardChannelSettings = field(default_factory=HazardChannelSettings)
+    program_blocks: ProgramBlocksSettings = field(default_factory=ProgramBlocksSettings)
 
 
 def load_settings(path: Path) -> AppSettings:
@@ -136,6 +170,7 @@ def settings_from_mapping(raw: dict) -> AppSettings:
 
     dvd = media.get("dvd", {}) or {}
     hazard = raw.get("hazard_channel", {}) or {}
+    program_blocks = raw.get("program_blocks", {}) or {}
     extensions = tuple(_normalize_extension(ext) for ext in media.get("extensions", []))
     directories = tuple(Path(item) for item in media.get("directories", []))
     if not directories:
@@ -164,6 +199,7 @@ def settings_from_mapping(raw: dict) -> AppSettings:
             random_seed=hazard.get("random_seed"),
             avoid_immediate_repeat=bool(hazard.get("avoid_immediate_repeat", True)),
         ),
+        program_blocks=_program_blocks_from_mapping(program_blocks),
         media=MediaSettings(
             directories=directories,
             recursive=bool(media.get("recursive", True)),
@@ -206,6 +242,36 @@ def settings_from_mapping(raw: dict) -> AppSettings:
     return settings
 
 
+def _program_blocks_from_mapping(raw: dict) -> ProgramBlocksSettings:
+    anchors = tuple(_program_anchor_from_mapping(item) for item in raw.get("anchors", []) or [])
+    fillers = raw.get("fillers", {}) or {}
+    countdown = raw.get("generated_countdown", {}) or {}
+    return ProgramBlocksSettings(
+        enabled=bool(raw.get("enabled", False)),
+        anchors=anchors,
+        fillers=FillerSettings(
+            enabled=bool(fillers.get("enabled", False)),
+            directories=tuple(Path(item) for item in fillers.get("directories", []) or []),
+            max_duration_seconds=int(fillers.get("max_duration_seconds", 900)),
+            if_no_filler=str(fillers.get("if_no_filler", "continue_current_mode")),
+        ),
+        generated_countdown=GeneratedCountdownSettings(
+            enabled=bool(countdown.get("enabled", False)),
+            max_duration_seconds=int(countdown.get("max_duration_seconds", 60)),
+            title=str(countdown.get("title", "Gleich geht's weiter")),
+        ),
+    )
+
+
+def _program_anchor_from_mapping(raw: dict) -> ProgramBlockAnchorSettings:
+    return ProgramBlockAnchorSettings(
+        enabled=bool(raw.get("enabled", False)),
+        time=str(raw.get("time", "20:15")),
+        title=str(raw.get("title", "Der 20:15 Film")),
+        allowed_tags=tuple(str(item) for item in raw.get("allowed_tags", []) or []),
+    )
+
+
 def _normalize_extension(extension: str) -> str:
     extension = extension.strip().lower()
     if not extension:
@@ -243,10 +309,33 @@ def _validate_settings(settings: AppSettings) -> None:
         raise ConfigurationError("hazard_channel.random_seed must be an integer or null")
     if settings.streaming.accepted_seek_tolerance_seconds < 0:
         raise ConfigurationError("streaming.accepted_seek_tolerance_seconds must not be negative")
+    if settings.program_blocks.generated_countdown.max_duration_seconds < 1:
+        raise ConfigurationError("program_blocks.generated_countdown.max_duration_seconds must be at least 1")
+    if settings.program_blocks.generated_countdown.max_duration_seconds > 60:
+        raise ConfigurationError("program_blocks.generated_countdown.max_duration_seconds must not be greater than 60")
+    if settings.program_blocks.fillers.max_duration_seconds < 1:
+        raise ConfigurationError("program_blocks.fillers.max_duration_seconds must be at least 1")
+    if settings.program_blocks.fillers.if_no_filler not in {"continue_current_mode", "start_anchor_late", "skip_anchor"}:
+        raise ConfigurationError("program_blocks.fillers.if_no_filler must be continue_current_mode, start_anchor_late, or skip_anchor")
+    for anchor in settings.program_blocks.anchors:
+        _validate_anchor_time(anchor.time)
     if not settings.streaming.output_container.strip():
         raise ConfigurationError("streaming.output_container must not be empty")
     _ = settings.schedule.zoneinfo
 
+
+
+def _validate_anchor_time(value: str) -> None:
+    parts = value.split(":")
+    if len(parts) != 2:
+        raise ConfigurationError(f"Invalid program block anchor time: {value}")
+    try:
+        hour = int(parts[0])
+        minute = int(parts[1])
+    except ValueError as exc:
+        raise ConfigurationError(f"Invalid program block anchor time: {value}") from exc
+    if not 0 <= hour <= 23 or not 0 <= minute <= 59:
+        raise ConfigurationError(f"Invalid program block anchor time: {value}")
 
 
 def settings_to_mapping(settings: AppSettings) -> dict:
@@ -273,6 +362,29 @@ def settings_to_mapping(settings: AppSettings) -> dict:
             "language": settings.hazard_channel.language,
             "random_seed": settings.hazard_channel.random_seed,
             "avoid_immediate_repeat": settings.hazard_channel.avoid_immediate_repeat,
+        },
+        "program_blocks": {
+            "enabled": settings.program_blocks.enabled,
+            "anchors": [
+                {
+                    "enabled": anchor.enabled,
+                    "time": anchor.time,
+                    "title": anchor.title,
+                    "allowed_tags": list(anchor.allowed_tags),
+                }
+                for anchor in settings.program_blocks.anchors
+            ],
+            "fillers": {
+                "enabled": settings.program_blocks.fillers.enabled,
+                "directories": [str(directory) for directory in settings.program_blocks.fillers.directories],
+                "max_duration_seconds": settings.program_blocks.fillers.max_duration_seconds,
+                "if_no_filler": settings.program_blocks.fillers.if_no_filler,
+            },
+            "generated_countdown": {
+                "enabled": settings.program_blocks.generated_countdown.enabled,
+                "max_duration_seconds": settings.program_blocks.generated_countdown.max_duration_seconds,
+                "title": settings.program_blocks.generated_countdown.title,
+            },
         },
         "media": {
             "directories": [str(directory) for directory in settings.media.directories],

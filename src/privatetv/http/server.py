@@ -193,6 +193,9 @@ async def health(request: web.Request) -> web.Response:
         "schedule_minimum_days_ahead": settings.schedule.minimum_days_ahead,
         "schedule_target_days_ahead": settings.schedule.days_ahead,
         "schedule_needs_extension": schedule_needs_extension,
+        "program_blocks_enabled": settings.program_blocks.enabled,
+        "generated_countdown_enabled": settings.program_blocks.generated_countdown.enabled,
+        "generated_countdown_max_seconds": settings.program_blocks.generated_countdown.max_duration_seconds,
         "current_programme": _current_programme_payload(current),
     }
     return web.json_response(payload, status=HTTPStatus.OK)

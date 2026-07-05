@@ -10,6 +10,7 @@ class SourceKind(StrEnum):
     LOCAL_FILE = "local_file"
     DVD_STRUCTURE = "dvd_structure"
     STREAMING_SERVICE = "streaming_service"
+    GENERATED = "generated"
 
 
 class ScanStatus(StrEnum):

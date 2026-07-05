@@ -78,6 +78,25 @@ def render_config_page(
           {_select('schedule.strategy', data['schedule']['strategy'], ['shuffle_no_repeat', 'alphabetical'])}
           {_input('schedule.random_seed', data['schedule']['random_seed'] if data['schedule']['random_seed'] is not None else '', input_type='number')}
 
+          <h2>Program blocks</h2>
+          <p class="hint">Experimental broadcast automation scaffolding. Keep disabled to preserve the current continuous film-after-film scheduler.</p>
+          {_checkbox('program_blocks.enabled', data['program_blocks']['enabled'])}
+          {_checkbox('program_blocks.anchors.0.enabled', _first_anchor(data)['enabled'])}
+          {_input('program_blocks.anchors.0.time', _first_anchor(data)['time'])}
+          {_input('program_blocks.anchors.0.title', _first_anchor(data)['title'])}
+          <label>program_blocks.anchors.0.allowed_tags <span>one tag per line</span>
+            <textarea name="program_blocks.anchors.0.allowed_tags" rows="3">{_escape(_lines(_first_anchor(data)['allowed_tags']))}</textarea>
+          </label>
+          {_checkbox('program_blocks.fillers.enabled', data['program_blocks']['fillers']['enabled'])}
+          <label>program_blocks.fillers.directories <span>one server-side path per line</span>
+            <textarea name="program_blocks.fillers.directories" rows="3">{_escape(_lines(data['program_blocks']['fillers']['directories']))}</textarea>
+          </label>
+          {_input('program_blocks.fillers.max_duration_seconds', data['program_blocks']['fillers'].get('max_duration_seconds', 900), input_type='number')}
+          {_select('program_blocks.fillers.if_no_filler', data['program_blocks']['fillers']['if_no_filler'], ['continue_current_mode', 'start_anchor_late', 'skip_anchor'])}
+          {_checkbox('program_blocks.generated_countdown.enabled', data['program_blocks']['generated_countdown']['enabled'])}
+          {_input('program_blocks.generated_countdown.max_duration_seconds', data['program_blocks']['generated_countdown']['max_duration_seconds'], input_type='number')}
+          {_input('program_blocks.generated_countdown.title', data['program_blocks']['generated_countdown']['title'])}
+
           <h2>Streaming</h2>
           {_input('streaming.max_parallel_streams', data['streaming']['max_parallel_streams'], input_type='number')}
           {_input('streaming.output_container', data['streaming']['output_container'])}
@@ -95,6 +114,13 @@ def render_config_page(
         </form>
         """,
     )
+
+
+def _first_anchor(data: dict) -> dict:
+    anchors = data.get("program_blocks", {}).get("anchors", [])
+    if anchors:
+        return anchors[0]
+    return {"enabled": False, "time": "20:15", "title": "Der 20:15 Film", "allowed_tags": ["movie"]}
 
 
 async def show_config(request: web.Request) -> web.Response:
@@ -293,6 +319,28 @@ def _form_to_mapping(form: Any) -> dict:
             "rebuild_hour": integer("schedule.rebuild_hour", 3),
             "strategy": text("schedule.strategy", "shuffle_no_repeat"),
             "random_seed": optional_integer("schedule.random_seed"),
+        },
+        "program_blocks": {
+            "enabled": checkbox("program_blocks.enabled"),
+            "anchors": [
+                {
+                    "enabled": checkbox("program_blocks.anchors.0.enabled"),
+                    "time": text("program_blocks.anchors.0.time", "20:15"),
+                    "title": text("program_blocks.anchors.0.title", "Der 20:15 Film"),
+                    "allowed_tags": lines("program_blocks.anchors.0.allowed_tags"),
+                }
+            ],
+            "fillers": {
+                "enabled": checkbox("program_blocks.fillers.enabled"),
+                "directories": lines("program_blocks.fillers.directories"),
+                "max_duration_seconds": integer("program_blocks.fillers.max_duration_seconds", 900),
+                "if_no_filler": text("program_blocks.fillers.if_no_filler", "continue_current_mode"),
+            },
+            "generated_countdown": {
+                "enabled": checkbox("program_blocks.generated_countdown.enabled"),
+                "max_duration_seconds": integer("program_blocks.generated_countdown.max_duration_seconds", 60),
+                "title": text("program_blocks.generated_countdown.title", "Gleich geht's weiter"),
+            },
         },
         "streaming": {
             "max_parallel_streams": integer("streaming.max_parallel_streams", 4),

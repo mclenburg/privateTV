@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from privatetv.config import AppSettings
 from privatetv.db import ScheduleRepository
 from privatetv.schedule.builder import ScheduleBuilder
+from privatetv.schedule.countdown import ensure_generated_countdown_media
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +65,7 @@ class ScheduleMaintainer:
                 inserted_entries=0,
             )
 
+        ensure_generated_countdown_media(connection, self._settings)
         media_items = repository.list_schedulable_media_items()
         if not media_items:
             return ScheduleMaintenanceResult(

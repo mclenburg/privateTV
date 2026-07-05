@@ -33,7 +33,7 @@ class FfmpegCommandFactory:
         *,
         concat_file: Path | None = None,
     ) -> StreamCommand:
-        if programme.media.source_kind == SourceKind.LOCAL_FILE:
+        if programme.media.source_kind in {SourceKind.LOCAL_FILE, SourceKind.GENERATED}:
             return self._build_local_file_command(programme, assets)
         if programme.media.source_kind == SourceKind.DVD_STRUCTURE:
             if concat_file is None:

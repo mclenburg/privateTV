@@ -91,6 +91,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     ]
     for directory in settings.media.directories:
         checks.append((f"media directory: {directory}", directory.exists()))
+    if settings.program_blocks.enabled and settings.program_blocks.fillers.enabled:
+        for directory in settings.program_blocks.fillers.directories:
+            checks.append((f"filler directory: {directory}", directory.exists()))
 
     failed = False
     for name, ok in checks:
@@ -116,6 +119,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
     scanned_items = 0
     local_items = 0
     dvd_items = 0
+    filler_items = 0
     imported_items = 0
     failed_items = 0
     skipped_items = 0
@@ -133,16 +137,28 @@ def cmd_scan(args: argparse.Namespace) -> int:
         print(f"[{progress_counter}] scan {kind}: {display_path}", flush=True)
 
     local_scanner = LocalFileScanner(settings, probe)
+    filler_scanner = None
+    if settings.program_blocks.enabled and settings.program_blocks.fillers.enabled:
+        filler_scanner = LocalFileScanner(
+            settings,
+            probe,
+            directories=settings.program_blocks.fillers.directories,
+            media_type="filler",
+            progress_kind="filler",
+        )
     dvd_scanner = DvdStructureScanner(settings, probe)
 
     with connect_database(settings.database.path) as connection:
         repository = MediaRepository(connection)
-        for item, assets in _chain_scan_results(
-            local_scanner.iter_scan_results(progress=progress),
-            dvd_scanner.iter_scan_results(progress=progress),
-        ):
+        scan_iterables = [local_scanner.iter_scan_results(progress=progress)]
+        if filler_scanner is not None:
+            scan_iterables.append(filler_scanner.iter_scan_results(progress=progress))
+        scan_iterables.append(dvd_scanner.iter_scan_results(progress=progress))
+        for item, assets in _chain_scan_results(*scan_iterables):
             scanned_items += 1
-            if item.source_kind == SourceKind.LOCAL_FILE:
+            if item.media_type in {"filler", "trailer", "bumper"}:
+                filler_items += 1
+            elif item.source_kind == SourceKind.LOCAL_FILE:
                 local_items += 1
             elif item.source_kind == SourceKind.DVD_STRUCTURE:
                 dvd_items += 1
@@ -173,6 +189,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
     print(f"Scanned media items: {scanned_items}")
     print(f"Local files:         {local_items}")
     print(f"DVD structures:      {dvd_items}")
+    print(f"Filler clips:        {filler_items}")
     print(f"Imported/updated:    {imported_items}")
     print(f"Probe/store failures:{failed_items}")
     print(f"Skipped files:       {skipped_items}")

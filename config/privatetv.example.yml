@@ -57,6 +57,32 @@ schedule:
   strategy: "shuffle_no_repeat"
   random_seed: 20260704
 
+# Optional broadcast automation mode.
+# Disabled by default: when program_blocks.enabled is false, PrivateTV keeps the current
+# continuous legacy scheduler and does not require filler clips.
+# Patch 19 adds an optional generated countdown before enabled anchors when the gap is <= 60s.
+program_blocks:
+  enabled: false
+  anchors:
+    - enabled: false
+      time: "20:15"
+      title: "Der 20:15 Film"
+      allowed_tags:
+        - "movie"
+  fillers:
+    enabled: false
+    directories: []
+    # Filler clips are scanned as short local clips and used only to bridge gaps before anchors.
+    # The generated countdown remains the fine adjustment and is still limited to 60 seconds.
+    max_duration_seconds: 900
+    # continue_current_mode preserves the existing film-after-film behavior when no filler is available.
+    if_no_filler: "continue_current_mode"
+  generated_countdown:
+    enabled: false
+    # Hard limit: generated countdowns must never be longer than 60 seconds.
+    max_duration_seconds: 60
+    title: "Gleich geht's weiter"
+
 streaming:
   max_parallel_streams: 4
   output_container: "mpegts"

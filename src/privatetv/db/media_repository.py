@@ -122,11 +122,11 @@ class MediaRepository:
             FROM media_item
             WHERE enabled = 1
               AND scan_status = ?
-              AND source_kind IN (?, ?)
+              AND source_kind IN (?, ?, ?)
               AND duration_seconds > 0
             ORDER BY title COLLATE NOCASE, id
             """,
-            (ScanStatus.OK.value, SourceKind.LOCAL_FILE.value, SourceKind.DVD_STRUCTURE.value),
+            (ScanStatus.OK.value, SourceKind.LOCAL_FILE.value, SourceKind.DVD_STRUCTURE.value, SourceKind.GENERATED.value),
         ).fetchall()
         return [media_item_from_row(row) for row in rows]
 

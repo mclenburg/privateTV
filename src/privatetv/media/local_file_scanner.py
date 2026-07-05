@@ -20,10 +20,21 @@ class ScanResult:
 
 
 class LocalFileScanner:
-    def __init__(self, settings: AppSettings, probe: FfprobeMediaProbe) -> None:
+    def __init__(
+        self,
+        settings: AppSettings,
+        probe: FfprobeMediaProbe,
+        *,
+        directories: tuple[Path, ...] | None = None,
+        media_type: str = "video_file",
+        progress_kind: str = "local-file",
+    ) -> None:
         self._settings = settings
         self._probe = probe
         self._extensions = {extension.lower() for extension in settings.media.extensions}
+        self._directories = directories if directories is not None else settings.media.directories
+        self._media_type = media_type
+        self._progress_kind = progress_kind
 
     def scan(self) -> list[tuple[MediaItem, tuple[MediaAsset, ...]]]:
         return list(self.iter_scan_results())
@@ -33,7 +44,7 @@ class LocalFileScanner:
         progress: Callable[[str, Path], None] | None = None,
     ) -> Iterator[tuple[MediaItem, tuple[MediaAsset, ...]]]:
         seen_paths: set[Path] = set()
-        for root in self._settings.media.directories:
+        for root in self._directories:
             if not root.exists() or not root.is_dir():
                 continue
             for path in self._iter_video_files(root):
@@ -46,7 +57,7 @@ class LocalFileScanner:
                         progress("skip-invalid-path", resolved)
                     continue
                 if progress is not None:
-                    progress("local-file", resolved)
+                    progress(self._progress_kind, resolved)
                 yield self._item_for_file(root, path)
 
     def _iter_video_files(self, root: Path):
@@ -96,7 +107,7 @@ class LocalFileScanner:
                 source_uri=source_uri,
                 source_root=resolved_root,
                 title=title_from_path(resolved_path),
-                media_type="video_file",
+                media_type=self._media_type,
                 duration_seconds=metadata.duration_seconds,
                 container=metadata.container,
                 video_codec=metadata.video_codec,
@@ -113,7 +124,7 @@ class LocalFileScanner:
                 source_uri=source_uri,
                 source_root=resolved_root,
                 title=title_from_path(resolved_path),
-                media_type="video_file",
+                media_type=self._media_type,
                 duration_seconds=0.001,
                 file_size_bytes=file_stat.st_size,
                 mtime=int(file_stat.st_mtime),

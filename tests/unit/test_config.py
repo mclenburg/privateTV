@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from privatetv.config import load_settings, settings_from_mapping
+from privatetv.config import load_settings, settings_from_mapping, settings_to_mapping
 
 
 def test_load_example_config() -> None:
@@ -63,4 +63,67 @@ def test_hazard_random_seed_must_be_integer_when_set(tmp_path: Path) -> None:
     raw["hazard_channel"] = {"enabled": True, "id": "hazard", "random_seed": "not-an-int"}
 
     with pytest.raises(ConfigurationError, match="random_seed"):
+        settings_from_mapping(raw)
+
+
+def test_program_blocks_default_to_disabled(tmp_path: Path) -> None:
+    settings = settings_from_mapping(_minimal_config(tmp_path))
+
+    assert settings.program_blocks.enabled is False
+    assert settings.program_blocks.generated_countdown.enabled is False
+    assert settings.program_blocks.generated_countdown.max_duration_seconds == 60
+
+
+def test_program_blocks_countdown_must_not_exceed_one_minute(tmp_path: Path) -> None:
+    raw = _minimal_config(tmp_path)
+    raw["program_blocks"] = {
+        "enabled": True,
+        "generated_countdown": {"enabled": True, "max_duration_seconds": 61},
+    }
+
+    with pytest.raises(ConfigurationError, match="must not be greater than 60"):
+        settings_from_mapping(raw)
+
+
+def test_program_blocks_roundtrip_preserves_scaffolding(tmp_path: Path) -> None:
+    raw = _minimal_config(tmp_path)
+    raw["program_blocks"] = {
+        "enabled": True,
+        "anchors": [
+            {
+                "enabled": True,
+                "time": "20:15",
+                "title": "Der 20:15 Film",
+                "allowed_tags": ["movie"],
+            }
+        ],
+        "fillers": {
+            "enabled": False,
+            "directories": [str(tmp_path / "fillers")],
+            "if_no_filler": "continue_current_mode",
+        },
+        "generated_countdown": {
+            "enabled": True,
+            "max_duration_seconds": 60,
+            "title": "Gleich geht's weiter",
+        },
+    }
+
+    settings = settings_from_mapping(raw)
+    roundtrip = settings_from_mapping(settings_to_mapping(settings))
+
+    assert roundtrip.program_blocks.enabled is True
+    assert roundtrip.program_blocks.anchors[0].time == "20:15"
+    assert roundtrip.program_blocks.anchors[0].allowed_tags == ("movie",)
+    assert roundtrip.program_blocks.fillers.if_no_filler == "continue_current_mode"
+
+
+def test_program_blocks_filler_max_duration_is_validated(tmp_path: Path) -> None:
+    raw = _minimal_config(tmp_path)
+    raw["program_blocks"] = {
+        "enabled": True,
+        "fillers": {"enabled": True, "max_duration_seconds": 0},
+    }
+
+    with pytest.raises(ConfigurationError, match="fillers.max_duration_seconds"):
         settings_from_mapping(raw)

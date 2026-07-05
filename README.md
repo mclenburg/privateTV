@@ -31,8 +31,20 @@ PrivateTV is under active development. The current implementation provides:
 - stream limit enforcement for concurrent viewers
 - systemd unit templates and production layout helper scripts
 - optional Hazard TV random channel streaming without EPG
+- optional broadcast-style program blocks with local filler clips and generated countdowns
 - built-in web configuration page with server-side media directory browsing
 - test fixtures and unit tests
+
+
+## Detailed Raspberry Pi installation guides
+
+For a real Raspberry Pi OS Trixie installation, use the dedicated guides instead of relying on the short quickstart alone:
+
+- [Raspberry Pi OS Trixie installation](docs/INSTALL_RASPBERRY_PI_OS_TRIXIE.md)
+- [Configuration reference](docs/CONFIGURATION.md)
+- [tvheadend integration](docs/TVHEADEND.md)
+
+These guides cover Python/venv setup, absolute database paths, systemd ownership, media scans, XMLTV, tvheadend, Kodi playback diagnosis, optional program blocks, generated countdowns, and local filler clips.
 
 ## Requirements
 
@@ -44,7 +56,7 @@ Install system packages on Raspberry Pi OS / Debian:
 
 ```bash
 sudo apt update
-sudo apt install python3 python3-venv ffmpeg
+sudo apt install python3 python3-venv python3-pip ffmpeg sqlite3 curl
 ```
 
 ## Installation for local use
@@ -54,6 +66,7 @@ From the repository root:
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
+python -m pip install --upgrade pip setuptools wheel
 pip install -e '.[dev]'
 ```
 
@@ -137,6 +150,33 @@ schedule:
 ```
 
 PrivateTV scans all configured media directories recursively. Subdirectories do not need to be listed separately.
+
+### Optional program blocks, fillers, and countdowns
+
+PrivateTV uses the continuous legacy scheduler by default: one enabled media item follows the next one and no filler clips are required. Program blocks are disabled by default. When enabled, PrivateTV can bridge the gap before an anchor such as 20:15 with short local filler clips and then use the generated countdown only for the final fine adjustment.
+
+```yaml
+program_blocks:
+  enabled: false
+  anchors:
+    - enabled: false
+      time: "20:15"
+      title: "Der 20:15 Film"
+      allowed_tags:
+        - "movie"
+  fillers:
+    enabled: false
+    directories:
+      - "/data/PrivateTV/Filler"
+    max_duration_seconds: 900
+    if_no_filler: "continue_current_mode"
+  generated_countdown:
+    enabled: false
+    max_duration_seconds: 60
+    title: "Gleich geht's weiter"
+```
+
+Generated countdowns are intentionally limited to at most 60 seconds. Longer gaps must be filled by normal programming or configured filler media, not by an endless countdown. Filler directories are scanned as short local clips with `media_type: filler`; they are not scheduled as normal movies. If the next normal item would overrun an enabled anchor, PrivateTV uses fitting filler clips first and then schedules the final 1–60 seconds of the generated countdown so the next normal item can start exactly at the anchor. If no suitable filler is available, `continue_current_mode` preserves the old film-after-film behavior.
 
 ## Test fixtures
 
