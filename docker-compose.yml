@@ -1,0 +1,15 @@
+services:
+  privatetv:
+    build: .
+    image: privatetv:local
+    container_name: privatetv
+    restart: unless-stopped
+    ports:
+      - "9988:9988"
+    volumes:
+      # Keep the active configuration outside the container.
+      - ./docker/config.yml:/config/config.yml:ro
+      # Replace this with your real media root, for example /data:/media:ro.
+      - ./media:/media:ro
+      # Persistent SQLite database and generated countdown assets.
+      - ./docker/state:/var/lib/privatetv

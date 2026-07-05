@@ -43,6 +43,7 @@ For a real Raspberry Pi OS Trixie installation, use the dedicated guides instead
 - [Raspberry Pi OS Trixie installation](docs/INSTALL_RASPBERRY_PI_OS_TRIXIE.md)
 - [Configuration reference](docs/CONFIGURATION.md)
 - [tvheadend integration](docs/TVHEADEND.md)
+- [Docker installation](docs/DOCKER.md)
 
 These guides cover Python/venv setup, absolute database paths, systemd ownership, media scans, XMLTV, tvheadend, Kodi playback diagnosis, optional program blocks, generated countdowns, and local filler clips.
 
@@ -58,6 +59,20 @@ Install system packages on Raspberry Pi OS / Debian:
 sudo apt update
 sudo apt install python3 python3-venv python3-pip ffmpeg sqlite3 curl
 ```
+
+
+## Docker quickstart
+
+PrivateTV can also run as a container. The image contains PrivateTV, Python, FFmpeg, and ffprobe. Configuration, media directories, SQLite state, and generated countdown clips stay outside the container image.
+
+```bash
+docker compose up --build -d
+docker compose exec privatetv privatetv doctor --config /config/config.yml
+docker compose exec privatetv privatetv scan --config /config/config.yml
+docker compose exec privatetv privatetv schedule --config /config/config.yml
+```
+
+See [Docker installation](docs/DOCKER.md) for volume layout, real media folders, tvheadend URLs, and permission notes.
 
 ## Installation for local use
 

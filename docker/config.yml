@@ -1,0 +1,83 @@
+server:
+  host: "0.0.0.0"
+  port: 9988
+  public_base_url: "http://127.0.0.1:9988"
+
+channel:
+  id: "privatetv"
+  name: "PrivateTV"
+  icon: ""
+  group_title: "Local"
+  language: "de"
+
+hazard_channel:
+  enabled: false
+  id: "hazardtv"
+  name: "Hazard TV"
+  icon: ""
+  group_title: "Local"
+  language: "de"
+  random_seed: 20260704
+  avoid_immediate_repeat: true
+
+media:
+  directories:
+    - "/media"
+  recursive: true
+  follow_symlinks: false
+  ignore_hidden_directories: true
+  extensions:
+    - ".avi"
+    - ".mpg"
+    - ".mpeg"
+    - ".mp4"
+    - ".mkv"
+    - ".ts"
+    - ".vob"
+  dvd:
+    enabled: true
+    detect_video_ts: true
+    main_title_strategy: "largest_titleset"
+    min_main_title_size_mb: 500
+    min_main_title_duration_seconds: 1200
+
+schedule:
+  minimum_days_ahead: 3
+  days_ahead: 5
+  timezone: "Europe/Berlin"
+  rebuild_hour: 3
+  strategy: "shuffle_no_repeat"
+  random_seed: 20260704
+
+program_blocks:
+  enabled: false
+  anchors:
+    - enabled: false
+      time: "20:15"
+      title: "Der 20:15 Film"
+      allowed_tags:
+        - "movie"
+  fillers:
+    enabled: false
+    directories: []
+    max_duration_seconds: 900
+    if_no_filler: "continue_current_mode"
+  generated_countdown:
+    enabled: false
+    max_duration_seconds: 60
+    title: "Gleich geht's weiter"
+
+streaming:
+  max_parallel_streams: 4
+  output_container: "mpegts"
+  prefer_stream_copy: true
+  transcode_when_needed: false
+  ffmpeg_path: "/usr/bin/ffmpeg"
+  ffprobe_path: "/usr/bin/ffprobe"
+  accepted_seek_tolerance_seconds: 10
+
+database:
+  path: "/var/lib/privatetv/privatetv.sqlite3"
+
+logging:
+  level: "INFO"
