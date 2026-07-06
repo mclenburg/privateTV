@@ -47,6 +47,7 @@ class FfmpegCommandFactory:
         assets: Sequence[MediaAsset],
     ) -> StreamCommand:
         input_path = _primary_asset_path(programme, assets)
+        codec_args = self._codec_args()
         return StreamCommand(
             argv=(
                 str(self._settings.streaming.ffmpeg_path),
@@ -56,14 +57,17 @@ class FfmpegCommandFactory:
                 "-ss",
                 _format_seconds(programme.offset_seconds),
                 "-re",
+                "-fflags",
+                "+genpts",
                 "-i",
                 str(input_path),
                 "-map",
                 "0:v:0",
                 "-map",
                 "0:a:0?",
-                "-c",
-                "copy",
+                *codec_args,
+                "-avoid_negative_ts",
+                "make_zero",
                 "-f",
                 self._settings.streaming.output_container,
                 "pipe:1",
@@ -76,6 +80,7 @@ class FfmpegCommandFactory:
         programme: CurrentProgramme,
         concat_file: Path,
     ) -> StreamCommand:
+        codec_args = self._codec_args()
         return StreamCommand(
             argv=(
                 str(self._settings.streaming.ffmpeg_path),
@@ -97,13 +102,38 @@ class FfmpegCommandFactory:
                 "0:v:0",
                 "-map",
                 "0:a:0?",
-                "-c",
-                "copy",
+                *codec_args,
+                "-avoid_negative_ts",
+                "make_zero",
                 "-f",
                 self._settings.streaming.output_container,
                 "pipe:1",
             ),
             seek_tolerance_seconds=self._settings.streaming.accepted_seek_tolerance_seconds,
+        )
+
+    def _codec_args(self) -> tuple[str, ...]:
+        if self._settings.streaming.prefer_stream_copy:
+            return ("-c", "copy")
+        if not self._settings.streaming.transcode_when_needed:
+            return ("-c", "copy")
+        return (
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-tune",
+            "zerolatency",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-ac",
+            "2",
+            "-ar",
+            "48000",
+            "-b:a",
+            "160k",
         )
 
 
