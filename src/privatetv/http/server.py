@@ -9,6 +9,7 @@ from importlib import resources
 from pathlib import Path
 
 from aiohttp import web
+from aiohttp.client_exceptions import ClientConnectionResetError
 
 from privatetv.config import AppSettings
 from privatetv.db import MediaRepository, ScheduleRepository, connect_database, initialize_database
@@ -386,6 +387,9 @@ async def _stream_iterator_response(
         async for chunk in iterator:
             await response.write(chunk)
         await response.write_eof()
+        return response
+    except (ClientConnectionResetError, ConnectionResetError, BrokenPipeError) as exc:
+        LOGGER.info("Stream client disconnected while writing response: %s", exc)
         return response
     finally:
         aclose = getattr(iterator, "aclose", None)
