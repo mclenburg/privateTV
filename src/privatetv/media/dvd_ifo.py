@@ -189,27 +189,28 @@ def _read_pgc_play_time(data: bytes, pgc_offset: int) -> float:
     if pgc_offset < 0 or pgc_offset + 8 > len(data):
         return 0.0
 
-    # In the DVD-Video PGC header, PGC playback time starts at offset +2.
-    # Keep a +4 fallback only for malformed/simplified fixtures where +2 is
-    # actually empty.  If +2 contains non-zero but invalid/implausible BCD, do
-    # not reinterpret the seconds byte as an hour value.
-    primary_raw = data[pgc_offset + 2 : pgc_offset + 6]
+    # The VTS_PGCITI entry points to a PGC descriptor whose first two bytes are
+    # reserved in real authored DVDs encountered by PrivateTV.  The useful PGC
+    # header starts after those bytes: program count at +2, cell count at +3,
+    # and PGC_PLAY_TIME at +4..+7.  Earlier PrivateTV builds read from +2, which
+    # interpreted the program/cell counts as hours/minutes and produced bogus
+    # durations such as 04:05:00 or 05:05:00 for children's DVDs that actually
+    # contain 00:27:29 or 00:40:50 titles.
+    primary_raw = data[pgc_offset + 4 : pgc_offset + 8]
     primary = _decode_dvd_time(primary_raw)
     if primary > 0:
         return primary
-    if any(primary_raw):
-        return 0.0
-    return _decode_dvd_time(data[pgc_offset + 4 : pgc_offset + 8])
+    return 0.0
 
 
 
 def _read_pgc_cell_sector_range(data: bytes, pgc_offset: int) -> tuple[int, int] | None:
-    if pgc_offset < 0 or pgc_offset + 0x14 > len(data):
+    if pgc_offset < 0 or pgc_offset + 0x16 > len(data):
         return None
-    cell_count = data[pgc_offset + 1]
+    cell_count = data[pgc_offset + 3]
     if cell_count <= 0 or cell_count > 255:
         return None
-    cell_playback_offset = int.from_bytes(data[pgc_offset + 0x12 : pgc_offset + 0x14], "big")
+    cell_playback_offset = int.from_bytes(data[pgc_offset + 0x14 : pgc_offset + 0x16], "big")
     if cell_playback_offset <= 0:
         return None
     table_offset = pgc_offset + cell_playback_offset

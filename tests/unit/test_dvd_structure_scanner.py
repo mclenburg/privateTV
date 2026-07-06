@@ -214,13 +214,76 @@ def _write_vts_ifo(path: Path, durations: list[tuple[int, int, int]]) -> None:
         pgc_start = 0x80 + index * 0x40
         data[entry_offset + 4 : entry_offset + 8] = pgc_start.to_bytes(4, "big")
         pgc_offset = table + pgc_start
-        data[pgc_offset] = 1
-        data[pgc_offset + 1] = 1
-        data[pgc_offset + 2] = _bcd(hours)
-        data[pgc_offset + 3] = _bcd(minutes)
-        data[pgc_offset + 4] = _bcd(seconds)
-        data[pgc_offset + 5] = 0x00
+        data[pgc_offset + 2] = 1
+        data[pgc_offset + 3] = 1
+        data[pgc_offset + 4] = _bcd(hours)
+        data[pgc_offset + 5] = _bcd(minutes)
+        data[pgc_offset + 6] = _bcd(seconds)
+        data[pgc_offset + 7] = 0x00
     path.write_bytes(bytes(data))
+
+
+
+
+def test_dvd_ifo_parser_reads_real_pgc_play_time_after_program_and_cell_counts(tmp_path: Path) -> None:
+    from privatetv.media.dvd_ifo import parse_dvd_ifo_pgc_candidates
+
+    video_ts = tmp_path / "real-layout"
+    video_ts.mkdir()
+    _write_vmg_ifo(video_ts / "VIDEO_TS.IFO", [1])
+    data = bytearray(8192)
+    data[0xCC:0xD0] = (1).to_bytes(4, "big")
+    table = 2048
+    data[table : table + 2] = (3).to_bytes(2, "big")
+    samples = [
+        (0x20, 3, 5, 0, 22, 8),
+        (0x22C, 4, 5, 0, 27, 29),
+        (0x440, 1, 1, 0, 0, 52),
+    ]
+    for index, (pgc_start, programs, cells, hours, minutes, seconds) in enumerate(samples):
+        entry_offset = table + 8 + index * 8
+        data[entry_offset + 4 : entry_offset + 8] = pgc_start.to_bytes(4, "big")
+        pgc_offset = table + pgc_start
+        data[pgc_offset + 2] = programs
+        data[pgc_offset + 3] = cells
+        data[pgc_offset + 4] = _bcd(hours)
+        data[pgc_offset + 5] = _bcd(minutes)
+        data[pgc_offset + 6] = _bcd(seconds)
+        data[pgc_offset + 7] = 0x61
+    (video_ts / "VTS_01_0.IFO").write_bytes(bytes(data))
+
+    candidates = parse_dvd_ifo_pgc_candidates(video_ts)
+
+    assert [candidate.duration_seconds for candidate in candidates] == [1328.0, 1649.0, 52.0]
+
+
+def test_dvd_ifo_parser_does_not_treat_program_cell_counts_as_time(tmp_path: Path) -> None:
+    from privatetv.media.dvd_ifo import parse_dvd_ifo_main_title_candidates
+
+    video_ts = tmp_path / "kids-dvd"
+    video_ts.mkdir()
+    _write_vmg_ifo(video_ts / "VIDEO_TS.IFO", [1])
+    data = bytearray(8192)
+    data[0xCC:0xD0] = (1).to_bytes(4, "big")
+    table = 2048
+    data[table : table + 2] = (1).to_bytes(2, "big")
+    pgc_start = 0x10
+    data[table + 8 + 4 : table + 8 + 8] = pgc_start.to_bytes(4, "big")
+    pgc_offset = table + pgc_start
+    # Programs=1, cells=2 used to be misread as 01:02:00.  The actual
+    # PGC_PLAY_TIME is 00:40:50 at +4..+7.
+    data[pgc_offset + 2] = 1
+    data[pgc_offset + 3] = 2
+    data[pgc_offset + 4] = _bcd(0)
+    data[pgc_offset + 5] = _bcd(40)
+    data[pgc_offset + 6] = _bcd(50)
+    data[pgc_offset + 7] = 0x50
+    (video_ts / "VTS_01_0.IFO").write_bytes(bytes(data))
+
+    candidates = parse_dvd_ifo_main_title_candidates(video_ts)
+
+    assert len(candidates) == 1
+    assert candidates[0].duration_seconds == 2450.0
 
 
 class ShortProbe:
@@ -318,14 +381,14 @@ def _write_vts_ifo_with_cells(path: Path, durations: list[tuple[int, int, int, i
         pgc_start = 0x100 + index * 0x80
         data[entry_offset + 4 : entry_offset + 8] = pgc_start.to_bytes(4, "big")
         pgc_offset = table + pgc_start
-        data[pgc_offset] = 1  # programs
-        data[pgc_offset + 1] = 1  # cells
-        data[pgc_offset + 2] = _bcd(hours)
-        data[pgc_offset + 3] = _bcd(minutes)
-        data[pgc_offset + 4] = _bcd(seconds)
-        data[pgc_offset + 5] = 0x00
+        data[pgc_offset + 2] = 1  # programs
+        data[pgc_offset + 3] = 1  # cells
+        data[pgc_offset + 4] = _bcd(hours)
+        data[pgc_offset + 5] = _bcd(minutes)
+        data[pgc_offset + 6] = _bcd(seconds)
+        data[pgc_offset + 7] = 0x00
         cell_table = 0x40
-        data[pgc_offset + 0x12 : pgc_offset + 0x14] = cell_table.to_bytes(2, "big")
+        data[pgc_offset + 0x14 : pgc_offset + 0x16] = cell_table.to_bytes(2, "big")
         cell_offset = pgc_offset + cell_table
         data[cell_offset + 8 : cell_offset + 12] = first_sector.to_bytes(4, "big")
         data[cell_offset + 20 : cell_offset + 24] = last_sector.to_bytes(4, "big")
