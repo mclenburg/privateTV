@@ -8,7 +8,7 @@ from privatetv.config import AppSettings
 from privatetv.domain.models import MediaAsset, MediaItem, ScanStatus, SourceKind
 from privatetv.media.probe import FfprobeMediaProbe, ProbeError
 from privatetv.media.series import SeriesDetector
-from privatetv.media.titles import title_from_path
+from privatetv.media.titles import is_dvd_standard_name, title_from_path
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,7 +95,14 @@ class LocalFileScanner:
             return False
         if path.is_symlink() and not self._settings.media.follow_symlinks:
             return False
-        return path.suffix.lower() in self._extensions
+        if path.suffix.lower() not in self._extensions:
+            return False
+        # DVD main titles are imported by DvdStructureScanner as one logical item.
+        # Only suppress standard VOB fragments inside real DVD structures; loose
+        # non-DVD VOB files must remain importable as normal local files.
+        if self._settings.media.dvd.enabled and _is_inside_dvd_structure(path):
+            return False
+        return True
 
     def _item_for_file(self, root: Path, path: Path) -> tuple[MediaItem, tuple[MediaAsset, ...]]:
         resolved_root = root.resolve()
@@ -170,3 +177,18 @@ class LocalFileScanner:
 
 def _contains_surrogate(path: Path) -> bool:
     return any("\udc80" <= character <= "\udcff" for character in str(path))
+
+
+def _is_inside_dvd_structure(path: Path) -> bool:
+    if not is_dvd_standard_name(path.name):
+        return False
+    parent = path.parent
+    if parent.name.upper() == "VIDEO_TS":
+        return True
+    if (parent / "VIDEO_TS.IFO").exists():
+        return True
+    return any(
+        child.name.upper().startswith("VTS_") and child.suffix.upper() == ".IFO"
+        for child in parent.iterdir()
+        if child.is_file()
+    )

@@ -134,3 +134,12 @@ def test_scanner_can_mark_configured_directory_as_filler(tmp_path: Path) -> None
     item, _assets = items[0]
     assert item.media_type == "filler"
     assert item.title == "coming up"
+
+
+def test_scanner_keeps_loose_vob_file_without_dvd_ifo_when_dvd_scanner_is_enabled(tmp_path: Path) -> None:
+    loose_vob = tmp_path / "VTS_01_1.VOB"
+    loose_vob.write_bytes(b"standalone vob")
+
+    items = LocalFileScanner(_settings(tmp_path), FakeProbe()).scan()
+
+    assert len(items) == 1

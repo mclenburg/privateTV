@@ -114,8 +114,10 @@ def _normalize_tags(raw: object, context: str) -> tuple[str, ...]:
 
 def _automatic_tags(item: MediaItem) -> tuple[str, ...]:
     tags = {item.media_type.strip().lower()} if item.media_type.strip() else set()
-    if item.media_type in {"filler", "trailer", "bumper", "commercial", "advertisement", "dvd_preview"}:
+    if item.media_type in {"filler", "trailer", "bumper", "commercial", "advertisement", "dvd_preview", "dvd_extra_filler", "dvd_pgc_extra_filler"}:
         tags.add("filler")
+        if item.media_type in {"dvd_extra_filler", "dvd_pgc_extra_filler"}:
+            tags.update({"dvd", "dvd_extra"})
         if item.duration_seconds <= 60:
             tags.add("short")
     elif item.media_type == "generated_countdown":

@@ -510,3 +510,30 @@ def test_series_rotation_continues_from_persisted_state() -> None:
     result = ScheduleBuilder(settings, series_rotation_state=state).build(items, start_at=start, end_at=start + timedelta(minutes=30))
 
     assert result.entries[0].title == "ALF S01E02"
+
+
+def test_schedule_builder_rotates_fillers_fairly_instead_of_reusing_first_two() -> None:
+    settings = _settings_with_distributed_fillers()
+    zone = ZoneInfo("Europe/Berlin")
+    start = datetime(2026, 1, 15, 10, 0, tzinfo=zone)
+    end = datetime(2026, 1, 15, 20, 20, tzinfo=zone)
+    items = [
+        _item(1, "Film 1", 3600),
+        _item(2, "Film 2", 3600),
+        _item(3, "Film 3", 3600),
+        _item(4, "Prime", 7200),
+        _filler(10, "Filler A", 30),
+        _filler(11, "Filler B", 30),
+        _filler(12, "Filler C", 30),
+        _filler(13, "Filler D", 30),
+        _filler(14, "Filler E", 30),
+        _countdown_item(99),
+    ]
+
+    result = ScheduleBuilder(settings).build(items, start_at=start, end_at=end)
+    filler_titles = [entry.title for entry in result.entries if entry.title.startswith("Filler ")]
+
+    assert len(filler_titles) >= 3
+    assert len(set(filler_titles[:5])) >= 3
+    for previous, current in zip(filler_titles, filler_titles[1:]):
+        assert previous != current

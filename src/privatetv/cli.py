@@ -167,7 +167,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
         scan_iterables.append(dvd_scanner.iter_scan_results(progress=progress))
         for item, assets in _chain_scan_results(*scan_iterables):
             scanned_items += 1
-            if item.media_type in {"filler", "trailer", "bumper"}:
+            if item.media_type in {"filler", "trailer", "bumper", "dvd_extra_filler"}:
                 filler_items += 1
             elif item.media_type == "episode":
                 episode_items += 1

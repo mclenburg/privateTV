@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
@@ -74,6 +75,8 @@ class ScheduleBuilder:
         current = start_at
         entries: list[ScheduleEntry] = []
         last_filler_id: int | None = None
+        recent_filler_ids: deque[int] = deque(maxlen=_recent_filler_window_size(filler_candidates))
+        filler_usage_counts: dict[int, int] = {}
         last_filler_block_end = start_at
 
         while current < target_end:
@@ -124,6 +127,8 @@ class ScheduleBuilder:
                     start_at=current,
                     target_end=target_end,
                     last_filler_id=last_filler_id,
+                    recent_filler_ids=recent_filler_ids,
+                    filler_usage_counts=filler_usage_counts,
                 )
                 if bridge_entries:
                     entries.extend(bridge_entries)
@@ -152,6 +157,8 @@ class ScheduleBuilder:
                     start_at=current,
                     target_end=target_end,
                     last_filler_id=last_filler_id,
+                    recent_filler_ids=recent_filler_ids,
+                    filler_usage_counts=filler_usage_counts,
                     last_filler_block_end=last_filler_block_end,
                 )
                 if between_entries:
@@ -338,6 +345,8 @@ class ScheduleBuilder:
         start_at: datetime,
         target_end: datetime,
         last_filler_id: int | None,
+        recent_filler_ids: deque[int],
+        filler_usage_counts: dict[int, int],
         last_filler_block_end: datetime,
     ) -> list[ScheduleEntry]:
         fillers = self._settings.program_blocks.fillers
@@ -360,6 +369,8 @@ class ScheduleBuilder:
             start_at=start_at,
             budget_seconds=budget,
             last_filler_id=last_filler_id,
+            recent_filler_ids=recent_filler_ids,
+            filler_usage_counts=filler_usage_counts,
             max_consecutive=fillers.max_consecutive_fillers,
         )
 
@@ -372,6 +383,8 @@ class ScheduleBuilder:
         start_at: datetime,
         target_end: datetime,
         last_filler_id: int | None,
+        recent_filler_ids: deque[int],
+        filler_usage_counts: dict[int, int],
     ) -> list[ScheduleEntry]:
         if not self._settings.program_blocks.enabled:
             return []
@@ -431,6 +444,8 @@ class ScheduleBuilder:
                 start_at=cursor,
                 budget_seconds=block_budget,
                 last_filler_id=last_id,
+                recent_filler_ids=recent_filler_ids,
+                filler_usage_counts=filler_usage_counts,
                 max_consecutive=self._settings.program_blocks.fillers.max_consecutive_fillers,
             )
             if not block:
@@ -509,6 +524,8 @@ class ScheduleBuilder:
         start_at: datetime,
         budget_seconds: float,
         last_filler_id: int | None,
+        recent_filler_ids: deque[int],
+        filler_usage_counts: dict[int, int],
         max_consecutive: int,
     ) -> list[ScheduleEntry]:
         entries: list[ScheduleEntry] = []
@@ -516,7 +533,13 @@ class ScheduleBuilder:
         remaining = budget_seconds
         last_id = last_filler_id
         while remaining > 0 and len(entries) < max_consecutive:
-            filler = _select_filler(filler_candidates, budget_seconds=remaining, last_filler_id=last_id)
+            filler = _select_filler(
+                filler_candidates,
+                budget_seconds=remaining,
+                last_filler_id=last_id,
+                recent_filler_ids=tuple(recent_filler_ids),
+                usage_counts=filler_usage_counts,
+            )
             if filler is None:
                 break
             stop = cursor + timedelta(seconds=float(filler.duration_seconds))
@@ -524,6 +547,7 @@ class ScheduleBuilder:
             cursor = stop
             remaining -= float(filler.duration_seconds)
             last_id = int(filler.id)
+            _remember_filler_id(last_id, recent_filler_ids, filler_usage_counts)
         return entries
 
     def _countdown_reserve_seconds(self, countdown_item: MediaItem | None, remaining_seconds: float) -> int:
@@ -652,13 +676,68 @@ def _select_filler(
     *,
     budget_seconds: float,
     last_filler_id: int | None,
+    recent_filler_ids: tuple[int, ...] = (),
+    usage_counts: dict[int, int] | None = None,
 ) -> MediaItem | None:
-    fitting = [item for item in filler_candidates if item.duration_seconds <= budget_seconds]
+    fitting = [item for item in filler_candidates if item.duration_seconds <= budget_seconds and item.id is not None]
     if not fitting:
         return None
-    non_repeated = [item for item in fitting if item.id != last_filler_id]
-    pool = non_repeated or fitting
-    return max(pool, key=lambda item: (item.duration_seconds, item.title.lower(), int(item.id or 0)))
+
+    usage_counts = usage_counts or {}
+    pool = [item for item in fitting if int(item.id) != last_filler_id] or fitting
+    recent_set = set(recent_filler_ids)
+    not_recent = [item for item in pool if int(item.id) not in recent_set]
+    if not_recent:
+        pool = not_recent
+
+    # Fair TV-style rotation: pick the least-used suitable filler first.  Duration
+    # remains a secondary criterion so that larger gaps are still filled sensibly,
+    # but the first two DB rows cannot dominate the whole schedule anymore.
+    return min(
+        pool,
+        key=lambda item: (
+            usage_counts.get(int(item.id), 0),
+            -float(item.duration_seconds),
+            item.title.casefold(),
+            int(item.id),
+        ),
+    )
+
+
+def _recent_filler_window_size(filler_candidates: list[MediaItem]) -> int:
+    if len(filler_candidates) <= 2:
+        return max(0, len(filler_candidates) - 1)
+    return min(5, len(filler_candidates) - 1)
+
+
+def _remember_filler_id(
+    media_item_id: int,
+    recent_filler_ids: deque[int],
+    usage_counts: dict[int, int],
+) -> None:
+    usage_counts[media_item_id] = usage_counts.get(media_item_id, 0) + 1
+    if recent_filler_ids.maxlen and media_item_id not in recent_filler_ids:
+        recent_filler_ids.append(media_item_id)
+    elif recent_filler_ids.maxlen:
+        # Move repeated IDs to the end when the fallback pool had no alternative.
+        try:
+            recent_filler_ids.remove(media_item_id)
+        except ValueError:
+            pass
+        recent_filler_ids.append(media_item_id)
+
+
+def _remember_filler_entries(
+    entries: list[ScheduleEntry],
+    countdown_item: MediaItem | None,
+    recent_filler_ids: deque[int],
+    usage_counts: dict[int, int],
+) -> None:
+    countdown_id = countdown_item.id if countdown_item is not None else None
+    for entry in entries:
+        if entry.media_item_id == countdown_id:
+            continue
+        _remember_filler_id(entry.media_item_id, recent_filler_ids, usage_counts)
 
 
 def _countdown_item(media_items: list[MediaItem]) -> MediaItem | None:
