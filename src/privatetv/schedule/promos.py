@@ -139,10 +139,10 @@ def _build_ffmpeg_promo_command(output_path: Path, source_path: Path, target: Me
     air_text = _escape_drawtext(air)
     vf_parts = ["scale=1280:-2,pad=1280:720:(ow-iw)/2:(oh-ih)/2:black"]
     vf_parts.append(f"drawbox=x=0:y=ih-190:w=iw:h=190:color=black@0.55:t=fill")
-    vf_parts.append(f"drawtext={font_arg}text='{label_text}':x=60:y=h-165:fontsize=42:fontcolor=white")
-    vf_parts.append(f"drawtext={font_arg}text='{title}':x=60:y=h-108:fontsize=48:fontcolor=white")
+    vf_parts.append(f"drawtext={font_arg}text={label_text}:x=60:y=h-165:fontsize=42:fontcolor=white")
+    vf_parts.append(f"drawtext={font_arg}text={title}:x=60:y=h-108:fontsize=48:fontcolor=white")
     if air_text:
-        vf_parts.append(f"drawtext={font_arg}text='{air_text}':x=60:y=h-48:fontsize=36:fontcolor=white")
+        vf_parts.append(f"drawtext={font_arg}text={air_text}:x=60:y=h-48:fontsize=36:fontcolor=white")
     return (
         str(settings.streaming.ffmpeg_path),
         "-y",
@@ -237,4 +237,8 @@ def _find_font() -> str | None:
 
 
 def _escape_drawtext(value: str) -> str:
-    return value.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
+    """Escape text for an unquoted FFmpeg drawtext text= value."""
+    escaped = value.replace("\\", "\\\\")
+    for character in (":", ",", ";", "'"):
+        escaped = escaped.replace(character, f"\\{character}")
+    return escaped

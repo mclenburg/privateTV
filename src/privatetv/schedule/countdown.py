@@ -91,10 +91,11 @@ def _build_ffmpeg_countdown_command(output_path: Path, settings: AppSettings) ->
     font = _find_font()
     title = _escape_drawtext(settings.program_blocks.generated_countdown.title or "Gleich geht's weiter")
     font_arg = f"fontfile={font}:" if font else ""
+    countdown_text = r"%{eif\\:60-t\\:d}"
     vf = (
-        f"drawtext={font_arg}text='{title}':x=(w-tw)/2:y=h*0.25:fontsize=54:fontcolor=white,"
-        f"drawtext={font_arg}text='%{{eif\\:60-t\\:d}}':x=(w-tw)/2:y=(h-th)/2:fontsize=150:fontcolor=white,"
-        f"drawtext={font_arg}text='PrivateTV':x=(w-tw)/2:y=h*0.72:fontsize=42:fontcolor=white"
+        f"drawtext={font_arg}text={title}:x=(w-tw)/2:y=h*0.25:fontsize=54:fontcolor=white,"
+        f"drawtext={font_arg}text={countdown_text}:x=(w-tw)/2:y=(h-th)/2:fontsize=150:fontcolor=white,"
+        f"drawtext={font_arg}text={_escape_drawtext('PrivateTV')}:x=(w-tw)/2:y=h*0.72:fontsize=42:fontcolor=white"
     )
     return (
         str(settings.streaming.ffmpeg_path),
@@ -139,4 +140,13 @@ def _find_font() -> str | None:
 
 
 def _escape_drawtext(value: str) -> str:
-    return value.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
+    """Escape text for an unquoted FFmpeg drawtext text= value.
+
+    Do not wrap the value in single quotes. A title such as "Gleich geht's
+    weiter" would otherwise leak into the following filter on FFmpeg's
+    filtergraph parser and break the countdown expression.
+    """
+    escaped = value.replace("\\", "\\\\")
+    for character in (":", ",", ";", "'"):
+        escaped = escaped.replace(character, f"\\{character}")
+    return escaped

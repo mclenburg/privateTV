@@ -54,3 +54,15 @@ def test_ensure_generated_countdown_media_registers_existing_clip(tmp_path: Path
     assert items[0].source_kind == SourceKind.GENERATED
     assert items[0].media_type == "generated_countdown"
     assert items[0].duration_seconds == 60
+
+
+def test_countdown_drawtext_uses_unquoted_escaped_text_for_apostrophes(tmp_path: Path) -> None:
+    from privatetv.schedule.countdown import _build_ffmpeg_countdown_command
+
+    settings = _settings(tmp_path)
+    command = _build_ffmpeg_countdown_command(tmp_path / "countdown.mp4", settings)
+    vf = command[command.index("-vf") + 1]
+
+    assert "text='Gleich" not in vf
+    assert "Gleich geht\\'s weiter" in vf
+    assert r"%{eif\\:60-t\\:d}" in vf
