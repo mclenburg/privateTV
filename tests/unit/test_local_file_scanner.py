@@ -143,3 +143,15 @@ def test_scanner_keeps_loose_vob_file_without_dvd_ifo_when_dvd_scanner_is_enable
     items = LocalFileScanner(_settings(tmp_path), FakeProbe()).scan()
 
     assert len(items) == 1
+
+
+def test_scanner_skips_total_vob_inside_dvd_rip_directory(tmp_path: Path) -> None:
+    dvd_root = tmp_path / "Aristocats"
+    dvd_root.mkdir()
+    (dvd_root / "VIDEO_TS.IFO").write_bytes(b"ifo")
+    (dvd_root / "total.vob").write_bytes(b"work artifact")
+    (dvd_root / "loose.mp4").write_bytes(b"movie")
+
+    items = LocalFileScanner(_settings(tmp_path), FakeProbe()).scan()
+
+    assert [item.title for item, _assets in items] == ["loose"]

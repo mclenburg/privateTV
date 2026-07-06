@@ -97,10 +97,13 @@ class LocalFileScanner:
             return False
         if path.suffix.lower() not in self._extensions:
             return False
-        # DVD main titles are imported by DvdStructureScanner as one logical item.
-        # Only suppress standard VOB fragments inside real DVD structures; loose
-        # non-DVD VOB files must remain importable as normal local files.
-        if self._settings.media.dvd.enabled and _is_inside_dvd_structure(path):
+        # DVD main titles and DVD extras are imported by DvdStructureScanner as
+        # logical items.  Suppress standard VOB fragments and common helper files
+        # inside DVD rip directories; loose non-DVD VOB files remain importable as
+        # normal local files.
+        if self._settings.media.dvd.enabled and (
+            _is_inside_dvd_structure(path) or _is_likely_dvd_work_artifact(path)
+        ):
             return False
         return True
 
@@ -181,6 +184,23 @@ def _contains_surrogate(path: Path) -> bool:
 
 def _is_inside_dvd_structure(path: Path) -> bool:
     if not is_dvd_standard_name(path.name):
+        return False
+    parent = path.parent
+    if parent.name.upper() == "VIDEO_TS":
+        return True
+    if (parent / "VIDEO_TS.IFO").exists():
+        return True
+    return any(
+        child.name.upper().startswith("VTS_") and child.suffix.upper() == ".IFO"
+        for child in parent.iterdir()
+        if child.is_file()
+    )
+
+
+def _is_likely_dvd_work_artifact(path: Path) -> bool:
+    if path.suffix.lower() != ".vob":
+        return False
+    if path.name.lower() not in {"total.vob", "concat.vob", "merged.vob", "joined.vob", "combined.vob"}:
         return False
     parent = path.parent
     if parent.name.upper() == "VIDEO_TS":

@@ -35,3 +35,21 @@ def test_probe_result_rejects_missing_duration(tmp_path: Path) -> None:
 
     with pytest.raises(ProbeError, match="no duration"):
         probe_result_from_payload(media_file, {"format": {}, "streams": []})
+
+
+def test_packet_count_duration_from_payload_uses_read_packets_and_frame_rate() -> None:
+    from privatetv.media.probe import packet_count_duration_from_payload
+
+    duration = packet_count_duration_from_payload(
+        {
+            "streams": [
+                {
+                    "nb_read_packets": "100896",
+                    "r_frame_rate": "25/1",
+                    "avg_frame_rate": "25/1",
+                }
+            ]
+        }
+    )
+
+    assert duration == pytest.approx(4035.84)

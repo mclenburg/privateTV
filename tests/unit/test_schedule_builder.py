@@ -537,3 +537,18 @@ def test_schedule_builder_rotates_fillers_fairly_instead_of_reusing_first_two() 
     assert len(set(filler_titles[:5])) >= 3
     for previous, current in zip(filler_titles, filler_titles[1:]):
         assert previous != current
+
+
+def test_schedule_builder_never_uses_tiny_normal_video_as_programme() -> None:
+    settings = _settings()
+    zone = ZoneInfo("Europe/Berlin")
+    start = datetime(2026, 1, 15, 12, 0, tzinfo=zone)
+    items = [
+        _item(1, "Broken AVI Duration", 1),
+        _item(2, "Real Movie", 3600),
+    ]
+
+    result = ScheduleBuilder(settings).build(items, start_at=start, end_at=start + timedelta(minutes=5))
+
+    assert result.entries
+    assert {entry.media_item_id for entry in result.entries} == {2}

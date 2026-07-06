@@ -11,7 +11,8 @@ from privatetv.schedule.countdown import COUNTDOWN_DURATION_SECONDS
 from privatetv.schedule.promos import PromoRequest
 from privatetv.schedule.strategy import create_schedule_strategy
 
-FILLER_MEDIA_TYPES = frozenset({"filler", "trailer", "bumper", "commercial", "advertisement", "dvd_preview", "generated_promo"})
+FILLER_MEDIA_TYPES = frozenset({"filler", "generated_countdown", "generated_promo", "dvd_extra_filler", "dvd_pgc_extra_filler", "trailer", "bumper", "commercial", "advertisement", "dvd_preview"})
+MIN_NORMAL_PROGRAMME_DURATION_SECONDS = 60.0
 
 PromoFactory = Callable[[PromoRequest], MediaItem | None]
 
@@ -649,7 +650,7 @@ def _is_schedulable_normal_item(item: MediaItem) -> bool:
     return (
         item.id is not None
         and item.enabled
-        and item.duration_seconds > 0
+        and item.duration_seconds >= MIN_NORMAL_PROGRAMME_DURATION_SECONDS
         and item.source_kind != SourceKind.GENERATED
         and item.media_type not in FILLER_MEDIA_TYPES
     )
