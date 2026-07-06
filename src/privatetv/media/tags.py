@@ -122,6 +122,10 @@ def _automatic_tags(item: MediaItem) -> tuple[str, ...]:
         tags.update({"generated", "countdown", "filler"})
     elif item.media_type == "generated_promo":
         tags.update({"generated", "promo", "filler"})
+    elif item.media_type == "episode" or item.series_title:
+        tags.update({"series", "episode"})
+        if item.duration_seconds and item.duration_seconds < 900:
+            tags.add("short")
     elif item.source_kind == SourceKind.DVD_STRUCTURE or item.media_type == "dvd_main_title":
         tags.update({"movie", "dvd"})
     else:

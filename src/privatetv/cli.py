@@ -130,6 +130,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
     local_items = 0
     dvd_items = 0
     filler_items = 0
+    episode_items = 0
     imported_items = 0
     failed_items = 0
     skipped_items = 0
@@ -168,6 +169,9 @@ def cmd_scan(args: argparse.Namespace) -> int:
             scanned_items += 1
             if item.media_type in {"filler", "trailer", "bumper"}:
                 filler_items += 1
+            elif item.media_type == "episode":
+                episode_items += 1
+                local_items += 1
             elif item.source_kind == SourceKind.LOCAL_FILE:
                 local_items += 1
             elif item.source_kind == SourceKind.DVD_STRUCTURE:
@@ -201,6 +205,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
     print(f"Local files:         {local_items}")
     print(f"DVD structures:      {dvd_items}")
     print(f"Filler clips:        {filler_items}")
+    print(f"Episodes detected:   {episode_items}")
     print(f"Imported/updated:    {imported_items}")
     print(f"Probe/store failures:{failed_items}")
     print(f"Skipped files:       {skipped_items}")
@@ -242,7 +247,10 @@ def cmd_list_media(args: argparse.Namespace) -> int:
         duration = _format_duration(item.duration_seconds)
         enabled = "enabled" if item.enabled else "disabled"
         tags = ",".join(item.tags) if item.tags else "-"
-        print(f"[{item.id}] {item.title} | {duration} | {status} | {enabled} | tags={tags} | {item.source_uri}")
+        series = ""
+        if item.series_title and item.season_number is not None and item.episode_number is not None:
+            series = f" | series={item.series_title} S{item.season_number:02d}E{item.episode_number:02d}"
+        print(f"[{item.id}] {item.title} | {duration} | {status} | {enabled} | tags={tags}{series} | {item.source_uri}")
     return 0
 
 

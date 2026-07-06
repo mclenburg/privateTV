@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, time, timedelta
 
 from privatetv.config import AppSettings, ProgramBlockAnchorSettings, ProgramBlockSettings
-from privatetv.domain.models import MediaItem, ScheduleEntry, SourceKind
+from privatetv.domain.models import MediaItem, ScheduleEntry, SourceKind, SeriesRotationSnapshot, SeriesRotationUpdate
 from privatetv.schedule.countdown import COUNTDOWN_DURATION_SECONDS
 from privatetv.schedule.promos import PromoRequest
 from privatetv.schedule.strategy import create_schedule_strategy
@@ -20,14 +20,23 @@ class ScheduleBuildResult:
     entries: list[ScheduleEntry]
     start_at: datetime
     end_at: datetime
+    series_rotation_updates: tuple[SeriesRotationUpdate, ...] = ()
 
 
 class ScheduleBuilder:
     """Builds a continuous linear schedule from enabled media items."""
 
-    def __init__(self, settings: AppSettings, *, promo_factory: PromoFactory | None = None) -> None:
+    def __init__(
+        self,
+        settings: AppSettings,
+        *,
+        promo_factory: PromoFactory | None = None,
+        series_rotation_state: dict[str, SeriesRotationSnapshot] | None = None,
+    ) -> None:
         self._settings = settings
         self._promo_factory = promo_factory
+        self._series_rotation_state = dict(series_rotation_state or {})
+        self._series_rotation_updates: dict[str, SeriesRotationUpdate] = {}
 
     def build(
         self,
@@ -91,7 +100,8 @@ class ScheduleBuilder:
                 if active_anchor is not None:
                     preferred_item = _first_matching_anchor_item(ordered, active_anchor) or preferred_item
                 elif active_block is not None:
-                    preferred_item = _first_matching_block_item(ordered, active_block) or preferred_item
+                    series_item = self._choose_series_rotation_item(ordered, active_block, current)
+                    preferred_item = series_item or _first_matching_block_item(ordered, active_block) or preferred_item
 
                 item = self._choose_item_for_program_block_window(
                     preferred_item=preferred_item,
@@ -127,8 +137,10 @@ class ScheduleBuilder:
                     if active_anchor is not None:
                         item = _first_matching_anchor_item(ordered, active_anchor) or item
                     elif active_block is not None:
-                        item = _first_matching_block_item(ordered, active_block) or item
+                        series_item = self._choose_series_rotation_item(ordered, active_block, current)
+                        item = series_item or _first_matching_block_item(ordered, active_block) or item
 
+                self._remember_series_rotation_if_needed(item, active_block, current)
                 duration = timedelta(seconds=float(item.duration_seconds))
                 stop = current + duration
                 entries.append(_entry_for_item(self._settings.channel.id, item, current, stop))
@@ -147,7 +159,83 @@ class ScheduleBuilder:
                     last_filler_id = _last_real_filler_id(between_entries, countdown_item)
                     current = between_entries[-1].end_time
                     last_filler_block_end = current
-        return ScheduleBuildResult(entries, start_at, target_end)
+        return ScheduleBuildResult(
+            entries,
+            start_at,
+            target_end,
+            tuple(self._series_rotation_updates.values()),
+        )
+
+    def _choose_series_rotation_item(
+        self,
+        candidates: list[MediaItem],
+        block: ProgramBlockSettings,
+        moment: datetime,
+    ) -> MediaItem | None:
+        if not (block.mode == "series_rotation" or block.series.enabled):
+            return None
+        episodes = [
+            item
+            for item in candidates
+            if _is_series_episode(item)
+            and _matches_block_tags(item, block)
+            and item.duration_seconds <= block.series.max_episode_duration_seconds
+        ]
+        if not episodes:
+            return None
+        by_series: dict[str, list[MediaItem]] = {}
+        for item in episodes:
+            by_series.setdefault(str(item.series_title), []).append(item)
+        for series_items in by_series.values():
+            series_items.sort(key=_episode_order_key)
+
+        rotation_name = _rotation_name(block)
+        snapshot = self._series_rotation_state.get(rotation_name)
+        if snapshot and snapshot.series_title in by_series:
+            series_items = by_series[str(snapshot.series_title)]
+            next_item = _next_episode_after(series_items, snapshot.episode_sort_key)
+            if next_item is not None:
+                return next_item
+            if block.series.on_series_end == "restart":
+                return series_items[0]
+            if block.series.on_series_end == "stop_block":
+                return None
+
+        series_names = sorted(by_series)
+        if snapshot and snapshot.series_title and block.series.on_series_end == "next_series":
+            later = [name for name in series_names if name > snapshot.series_title]
+            chosen_name = (later or series_names)[0]
+            return by_series[chosen_name][0]
+        return by_series[series_names[0]][0]
+
+    def _remember_series_rotation_if_needed(
+        self,
+        item: MediaItem,
+        block: ProgramBlockSettings | None,
+        moment: datetime,
+    ) -> None:
+        if block is None or not (block.mode == "series_rotation" or block.series.enabled):
+            return
+        if not block.series.remember_position or not _is_series_episode(item):
+            return
+        rotation_name = _rotation_name(block)
+        update = SeriesRotationUpdate(
+            rotation_name=rotation_name,
+            series_title=str(item.series_title),
+            media_item_id=int(item.id),
+            season_number=int(item.season_number),
+            episode_number=int(item.episode_number),
+            episode_sort_key=str(item.episode_sort_key or _episode_sort_key(item)),
+            updated_at=moment,
+        )
+        self._series_rotation_updates[rotation_name] = update
+        self._series_rotation_state[rotation_name] = SeriesRotationSnapshot(
+            series_title=update.series_title,
+            media_item_id=update.media_item_id,
+            season_number=update.season_number,
+            episode_number=update.episode_number,
+            episode_sort_key=update.episode_sort_key,
+        )
 
     def _skip_empty_program_block_until(
         self,
@@ -182,6 +270,8 @@ class ScheduleBuilder:
         active_block_info = _active_block_info(self._settings.program_blocks.blocks, start_at)
         if active_block_info is not None:
             block, _block_start, block_end = active_block_info
+            if block.mode == "series_rotation" or block.series.enabled:
+                return preferred_item
             block_candidates = [item for item in candidates if _matches_block_tags(item, block)]
             if not block_candidates:
                 return preferred_item
@@ -461,6 +551,45 @@ class ScheduleBuilder:
             title=self._settings.program_blocks.generated_countdown.title,
             description=f"PrivateTV Countdown bis {anchor.time}",
         )
+
+
+def _is_series_episode(item: MediaItem) -> bool:
+    return (
+        item.id is not None
+        and item.enabled
+        and item.media_type == "episode"
+        and item.series_title is not None
+        and item.season_number is not None
+        and item.episode_number is not None
+    )
+
+
+def _episode_order_key(item: MediaItem) -> tuple[str, int, int, str, int]:
+    return (
+        str(item.series_title or "").casefold(),
+        int(item.season_number or 0),
+        int(item.episode_number or 0),
+        str(item.episode_sort_key or ""),
+        int(item.id or 0),
+    )
+
+
+def _next_episode_after(series_items: list[MediaItem], episode_sort_key: str | None) -> MediaItem | None:
+    if not episode_sort_key:
+        return series_items[0] if series_items else None
+    for item in series_items:
+        current_key = str(item.episode_sort_key or _sort_key_text(item))
+        if current_key > episode_sort_key:
+            return item
+    return None
+
+
+def _sort_key_text(item: MediaItem) -> str:
+    return f"{str(item.series_title or '').casefold()}:{int(item.season_number or 0):04d}:{int(item.episode_number or 0):04d}:{int(item.id or 0):08d}"
+
+
+def _rotation_name(block: ProgramBlockSettings) -> str:
+    return block.title.strip() or f"series_rotation_{block.start}"
 
 
 def _entry_for_item(channel_id: str, item: MediaItem, start: datetime, stop: datetime) -> ScheduleEntry:

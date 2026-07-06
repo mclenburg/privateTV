@@ -445,3 +445,33 @@ Supported values:
 
 - `continue_current_mode`: keep the channel continuous and schedule normal rotation when the block has no matching media.
 - `skip_block`: do not schedule unrelated media inside the block window. This can intentionally create an EPG/stream gap for that block.
+
+
+## Serien-Rotation / Vorabendserie
+
+Patch 30 erkennt Serienfolgen beim Scan über Standard-Pattern und optionale `media.series_detection.custom_patterns`. Patch 31 bindet diese Metadaten in den Scheduler ein. Ein Block mit `mode: "series_rotation"` spielt nur erkannte Episoden (`media_type: episode`) in numerischer Staffel-/Folgenreihenfolge. Der Fortschritt wird in der Datenbank gespeichert, damit der nächste Planungslauf mit der nächsten Folge weitermacht.
+
+Beispiel:
+
+```yaml
+program_blocks:
+  enabled: true
+  blocks:
+    - enabled: true
+      start: "18:05"
+      duration: "00:45:00"
+      title: "Vorabendserie"
+      allowed_tags:
+        - "vorabendserie"
+      if_empty: "skip_block"
+      mode: "series_rotation"
+      series:
+        enabled: true
+        selection: "continue_current_series"
+        on_series_end: "next_series"
+        max_episode_duration_seconds: 3600
+        remember_position: true
+```
+
+`on_series_end` kann `restart`, `next_series` oder `stop_block` sein.
+

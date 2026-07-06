@@ -10,6 +10,7 @@ _MEDIA_SELECT = """
 SELECT id, source_kind, source_uri, source_root, title, media_type,
        duration_seconds, enabled, container, video_codec, audio_codec,
        file_size_bytes, mtime, scan_status, scan_error,
+       series_title, season_number, episode_number, episode_title, episode_sort_key,
        (SELECT group_concat(tag, ',') FROM media_tag WHERE media_tag.media_item_id = media_item.id) AS tags_csv
 FROM media_item
 """
@@ -26,8 +27,9 @@ class MediaRepository:
             INSERT INTO media_item (
                 source_kind, source_uri, source_root, title, media_type, container,
                 video_codec, audio_codec, duration_seconds, file_size_bytes, mtime,
-                enabled, scan_status, scan_error, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                enabled, scan_status, scan_error, series_title, season_number, episode_number,
+                episode_title, episode_sort_key, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(source_kind, source_uri) DO UPDATE SET
                 source_root = excluded.source_root,
                 title = excluded.title,
@@ -41,6 +43,11 @@ class MediaRepository:
                 enabled = excluded.enabled,
                 scan_status = excluded.scan_status,
                 scan_error = excluded.scan_error,
+                series_title = excluded.series_title,
+                season_number = excluded.season_number,
+                episode_number = excluded.episode_number,
+                episode_title = excluded.episode_title,
+                episode_sort_key = excluded.episode_sort_key,
                 updated_at = excluded.updated_at
             """,
             (
@@ -58,6 +65,11 @@ class MediaRepository:
                 1 if item.enabled else 0,
                 item.scan_status.value,
                 item.scan_error,
+                item.series_title,
+                item.season_number,
+                item.episode_number,
+                item.episode_title,
+                item.episode_sort_key,
                 now,
                 now,
             ),
@@ -193,6 +205,11 @@ def media_item_from_row(row: sqlite3.Row) -> MediaItem:
         scan_status=ScanStatus(str(row["scan_status"])),
         scan_error=row["scan_error"],
         tags=tags,
+        series_title=row["series_title"] if "series_title" in keys else None,
+        season_number=row["season_number"] if "season_number" in keys else None,
+        episode_number=row["episode_number"] if "episode_number" in keys else None,
+        episode_title=row["episode_title"] if "episode_title" in keys else None,
+        episode_sort_key=row["episode_sort_key"] if "episode_sort_key" in keys else None,
     )
 
 

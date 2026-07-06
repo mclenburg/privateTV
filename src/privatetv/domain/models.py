@@ -38,6 +38,11 @@ class MediaItem:
     scan_status: ScanStatus = ScanStatus.OK
     scan_error: str | None = None
     tags: tuple[str, ...] = ()
+    series_title: str | None = None
+    season_number: int | None = None
+    episode_number: int | None = None
+    episode_title: str | None = None
+    episode_sort_key: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,3 +78,23 @@ class CurrentProgramme:
 class StreamCommand:
     argv: tuple[str, ...]
     seek_tolerance_seconds: int
+
+
+@dataclass(frozen=True, slots=True)
+class SeriesRotationUpdate:
+    rotation_name: str
+    series_title: str
+    media_item_id: int
+    season_number: int
+    episode_number: int
+    episode_sort_key: str
+    updated_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class SeriesRotationSnapshot:
+    series_title: str | None = None
+    media_item_id: int | None = None
+    season_number: int | None = None
+    episode_number: int | None = None
+    episode_sort_key: str | None = None

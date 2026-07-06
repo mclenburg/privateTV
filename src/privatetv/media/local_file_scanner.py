@@ -7,6 +7,7 @@ from pathlib import Path
 from privatetv.config import AppSettings
 from privatetv.domain.models import MediaAsset, MediaItem, ScanStatus, SourceKind
 from privatetv.media.probe import FfprobeMediaProbe, ProbeError
+from privatetv.media.series import SeriesDetector
 from privatetv.media.titles import title_from_path
 
 
@@ -35,6 +36,7 @@ class LocalFileScanner:
         self._directories = directories if directories is not None else settings.media.directories
         self._media_type = media_type
         self._progress_kind = progress_kind
+        self._series_detector = SeriesDetector(settings.media.series_detection)
 
     def scan(self) -> list[tuple[MediaItem, tuple[MediaAsset, ...]]]:
         return list(self.iter_scan_results())
@@ -99,6 +101,19 @@ class LocalFileScanner:
         resolved_root = root.resolve()
         resolved_path = path.resolve()
         source_uri = resolved_path.as_uri()
+        series_metadata = None
+        if self._media_type == "video_file":
+            series_metadata = self._series_detector.detect(resolved_root, resolved_path)
+        media_type = "episode" if series_metadata is not None else self._media_type
+        display_title = title_from_path(resolved_path)
+        if series_metadata is not None:
+            title_tail = series_metadata.episode_title or display_title
+            display_title = (
+                f"{series_metadata.series_title} "
+                f"S{series_metadata.season_number:02d}E{series_metadata.episode_number:02d}"
+            )
+            if title_tail:
+                display_title = f"{display_title} - {title_tail}"
         try:
             metadata = self._probe.probe(resolved_path)
             item = MediaItem(
@@ -106,8 +121,8 @@ class LocalFileScanner:
                 source_kind=SourceKind.LOCAL_FILE,
                 source_uri=source_uri,
                 source_root=resolved_root,
-                title=title_from_path(resolved_path),
-                media_type=self._media_type,
+                title=display_title,
+                media_type=media_type,
                 duration_seconds=metadata.duration_seconds,
                 container=metadata.container,
                 video_codec=metadata.video_codec,
@@ -115,6 +130,11 @@ class LocalFileScanner:
                 file_size_bytes=metadata.file_size_bytes,
                 mtime=metadata.mtime,
                 scan_status=ScanStatus.OK,
+                series_title=series_metadata.series_title if series_metadata else None,
+                season_number=series_metadata.season_number if series_metadata else None,
+                episode_number=series_metadata.episode_number if series_metadata else None,
+                episode_title=series_metadata.episode_title if series_metadata else None,
+                episode_sort_key=series_metadata.sort_key if series_metadata else None,
             )
         except ProbeError as exc:
             file_stat = resolved_path.stat()
@@ -123,14 +143,19 @@ class LocalFileScanner:
                 source_kind=SourceKind.LOCAL_FILE,
                 source_uri=source_uri,
                 source_root=resolved_root,
-                title=title_from_path(resolved_path),
-                media_type=self._media_type,
+                title=display_title,
+                media_type=media_type,
                 duration_seconds=0.001,
                 file_size_bytes=file_stat.st_size,
                 mtime=int(file_stat.st_mtime),
                 enabled=False,
                 scan_status=ScanStatus.PROBE_FAILED,
                 scan_error=str(exc),
+                series_title=series_metadata.series_title if series_metadata else None,
+                season_number=series_metadata.season_number if series_metadata else None,
+                episode_number=series_metadata.episode_number if series_metadata else None,
+                episode_title=series_metadata.episode_title if series_metadata else None,
+                episode_sort_key=series_metadata.sort_key if series_metadata else None,
             )
         asset = MediaAsset(
             id=None,

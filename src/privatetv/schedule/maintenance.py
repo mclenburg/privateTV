@@ -92,12 +92,17 @@ class ScheduleMaintainer:
             )
 
         promo_generator = PromoGenerator(connection, self._settings)
-        build_result = ScheduleBuilder(self._settings, promo_factory=promo_generator.create).build(
+        build_result = ScheduleBuilder(
+            self._settings,
+            promo_factory=promo_generator.create,
+            series_rotation_state=repository.list_series_rotation_state(),
+        ).build(
             media_items,
             start_at=start_at,
             end_at=target_until,
         )
         inserted = repository.append_entries(build_result.entries)
+        repository.upsert_series_rotation_updates(build_result.series_rotation_updates)
         after = repository.get_schedule_end(self._settings.channel.id)
         return ScheduleMaintenanceResult(
             schedule_until_before=before,

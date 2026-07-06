@@ -4,7 +4,7 @@ import sqlite3
 from datetime import datetime
 
 from privatetv.db.media_repository import media_item_from_row
-from privatetv.domain.models import MediaItem, ScheduleEntry, ScanStatus
+from privatetv.domain.models import MediaItem, ScheduleEntry, ScanStatus, SeriesRotationSnapshot, SeriesRotationUpdate
 
 
 class ScheduleRepository:
@@ -17,6 +17,7 @@ class ScheduleRepository:
             SELECT id, source_kind, source_uri, source_root, title, media_type,
                    duration_seconds, enabled, container, video_codec, audio_codec,
                    file_size_bytes, mtime, scan_status, scan_error,
+                   series_title, season_number, episode_number, episode_title, episode_sort_key,
                    (SELECT group_concat(tag, ',') FROM media_tag WHERE media_tag.media_item_id = media_item.id) AS tags_csv
             FROM media_item
             WHERE enabled = 1
@@ -88,6 +89,56 @@ class ScheduleRepository:
         )
         return int(cursor.rowcount or 0)
 
+
+    def list_series_rotation_state(self) -> dict[str, SeriesRotationSnapshot]:
+        rows = self._connection.execute(
+            """
+            SELECT rotation_name, series_title, media_item_id, season_number, episode_number, episode_sort_key
+            FROM series_rotation_state
+            """
+        ).fetchall()
+        return {
+            str(row["rotation_name"]): SeriesRotationSnapshot(
+                series_title=str(row["series_title"]),
+                media_item_id=int(row["media_item_id"]),
+                season_number=int(row["season_number"]),
+                episode_number=int(row["episode_number"]),
+                episode_sort_key=str(row["episode_sort_key"]),
+            )
+            for row in rows
+        }
+
+    def upsert_series_rotation_updates(self, updates: tuple[SeriesRotationUpdate, ...]) -> int:
+        if not updates:
+            return 0
+        self._connection.executemany(
+            """
+            INSERT INTO series_rotation_state (
+                rotation_name, series_title, media_item_id, season_number, episode_number, episode_sort_key, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(rotation_name) DO UPDATE SET
+                series_title = excluded.series_title,
+                media_item_id = excluded.media_item_id,
+                season_number = excluded.season_number,
+                episode_number = excluded.episode_number,
+                episode_sort_key = excluded.episode_sort_key,
+                updated_at = excluded.updated_at
+            """,
+            [
+                (
+                    update.rotation_name,
+                    update.series_title,
+                    update.media_item_id,
+                    update.season_number,
+                    update.episode_number,
+                    update.episode_sort_key,
+                    update.updated_at.isoformat(),
+                )
+                for update in updates
+            ],
+        )
+        return len(updates)
+
     def list_entries(
         self,
         channel_id: str,
@@ -138,6 +189,7 @@ class ScheduleRepository:
               m.id, m.source_kind, m.source_uri, m.source_root, m.title, m.media_type,
               m.duration_seconds, m.enabled, m.container, m.video_codec, m.audio_codec,
               m.file_size_bytes, m.mtime, m.scan_status, m.scan_error,
+              m.series_title, m.season_number, m.episode_number, m.episode_title, m.episode_sort_key,
               (SELECT group_concat(tag, ',') FROM media_tag WHERE media_tag.media_item_id = m.id) AS tags_csv
             FROM schedule_entry s
             JOIN media_item m ON m.id = s.media_item_id

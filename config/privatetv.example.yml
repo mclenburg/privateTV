@@ -48,6 +48,15 @@ media:
     main_title_strategy: "largest_titleset"
     min_main_title_size_mb: 0
     min_main_title_duration_seconds: 1
+  series_detection:
+    enabled: true
+    # Built-in patterns detect common names such as S01E02, 1x02, Staffel 1/Folge 02.
+    auto_patterns: true
+    # Custom patterns are matched relative to each media directory and without file extension.
+    # Example: /data/Serien/ALF/1/03_Katzenjammer.mkv -> ALF S01E03
+    custom_patterns:
+      - name: "Serienname Staffelnummer Folgennummer"
+        pattern: "{seriesName}/{seasonNo}/{episodeNo}_*"
 
 schedule:
   # XMLTV should always extend at least this far into the future.
@@ -86,6 +95,32 @@ program_blocks:
       tag_match: "any"
       # continue_current_mode keeps the legacy rotation if no matching material exists.
       if_empty: "continue_current_mode"
+      # normal = ordinary tag-based block. series_rotation = play detected episodes in SxxEyy order.
+      mode: "normal"
+      series:
+        enabled: false
+        selection: "continue_current_series"
+        # restart | next_series | stop_block
+        on_series_end: "restart"
+        max_episode_duration_seconds: 3600
+        remember_position: true
+    - enabled: false
+      start: "18:05"
+      duration: "00:45:00"
+      title: "Vorabendserie"
+      allowed_tags:
+        - "vorabendserie"
+      denied_tags:
+        - "filler"
+      tag_match: "any"
+      if_empty: "skip_block"
+      mode: "series_rotation"
+      series:
+        enabled: true
+        selection: "continue_current_series"
+        on_series_end: "next_series"
+        max_episode_duration_seconds: 3600
+        remember_position: true
   fillers:
     enabled: false
     directories: []

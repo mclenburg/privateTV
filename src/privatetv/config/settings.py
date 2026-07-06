@@ -48,6 +48,19 @@ class DvdSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class SeriesPatternSettings:
+    name: str
+    pattern: str
+
+
+@dataclass(frozen=True, slots=True)
+class SeriesDetectionSettings:
+    enabled: bool = True
+    auto_patterns: bool = True
+    custom_patterns: tuple[SeriesPatternSettings, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class MediaSettings:
     directories: tuple[Path, ...]
     tag_file: Path | None = None
@@ -64,6 +77,7 @@ class MediaSettings:
         ".vob",
     )
     dvd: DvdSettings = field(default_factory=DvdSettings)
+    series_detection: SeriesDetectionSettings = field(default_factory=SeriesDetectionSettings)
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,6 +110,15 @@ class ProgramBlockAnchorSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class SeriesRotationSettings:
+    enabled: bool = False
+    selection: str = "continue_current_series"
+    on_series_end: str = "restart"
+    max_episode_duration_seconds: int = 3600
+    remember_position: bool = True
+
+
+@dataclass(frozen=True, slots=True)
 class ProgramBlockSettings:
     enabled: bool = False
     start: str = "06:00"
@@ -105,6 +128,8 @@ class ProgramBlockSettings:
     denied_tags: tuple[str, ...] = ()
     tag_match: str = "any"
     if_empty: str = "continue_current_mode"
+    mode: str = "normal"
+    series: SeriesRotationSettings = field(default_factory=SeriesRotationSettings)
 
 
 @dataclass(frozen=True, slots=True)
@@ -270,6 +295,7 @@ def settings_from_mapping(raw: dict) -> AppSettings:
                     dvd.get("min_main_title_duration_seconds", 1200)
                 ),
             ),
+            series_detection=_series_detection_from_mapping(media.get("series_detection", {}) or {}),
         ),
         schedule=ScheduleSettings(
             days_ahead=int(schedule.get("days_ahead", 5)),
@@ -295,6 +321,25 @@ def settings_from_mapping(raw: dict) -> AppSettings:
     )
     _validate_settings(settings)
     return settings
+
+
+def _series_detection_from_mapping(raw: dict) -> SeriesDetectionSettings:
+    patterns = []
+    for item in raw.get("custom_patterns", []) or []:
+        if isinstance(item, str):
+            patterns.append(SeriesPatternSettings(name=item, pattern=item))
+            continue
+        patterns.append(
+            SeriesPatternSettings(
+                name=str(item.get("name", item.get("pattern", "custom series pattern"))),
+                pattern=str(item.get("pattern", "")),
+            )
+        )
+    return SeriesDetectionSettings(
+        enabled=bool(raw.get("enabled", True)),
+        auto_patterns=bool(raw.get("auto_patterns", True)),
+        custom_patterns=tuple(patterns),
+    )
 
 
 def _program_blocks_from_mapping(raw: dict) -> ProgramBlocksSettings:
@@ -375,6 +420,7 @@ def _program_anchor_from_mapping(raw: dict) -> ProgramBlockAnchorSettings:
 
 
 def _program_block_from_mapping(raw: dict) -> ProgramBlockSettings:
+    series_raw = raw.get("series", {}) or {}
     return ProgramBlockSettings(
         enabled=bool(raw.get("enabled", False)),
         start=str(raw.get("start", "06:00")),
@@ -384,6 +430,14 @@ def _program_block_from_mapping(raw: dict) -> ProgramBlockSettings:
         denied_tags=tuple(_normalize_tag(item) for item in raw.get("denied_tags", []) or []),
         tag_match=str(raw.get("tag_match", "any")),
         if_empty=str(raw.get("if_empty", "continue_current_mode")),
+        mode=str(raw.get("mode", "normal")),
+        series=SeriesRotationSettings(
+            enabled=bool(series_raw.get("enabled", raw.get("mode") == "series_rotation")),
+            selection=str(series_raw.get("selection", "continue_current_series")),
+            on_series_end=str(series_raw.get("on_series_end", "restart")),
+            max_episode_duration_seconds=_parse_duration_seconds(series_raw.get("max_episode_duration", series_raw.get("max_episode_duration_seconds", 3600))),
+            remember_position=bool(series_raw.get("remember_position", True)),
+        ),
     )
 
 
@@ -484,6 +538,14 @@ def _validate_settings(settings: AppSettings) -> None:
             raise ConfigurationError("program_blocks.blocks[].duration must not be greater than 24 hours")
         if block.if_empty not in {"continue_current_mode", "skip_block"}:
             raise ConfigurationError("program_blocks.blocks[].if_empty must be continue_current_mode or skip_block")
+        if block.mode not in {"normal", "series_rotation"}:
+            raise ConfigurationError("program_blocks.blocks[].mode must be normal or series_rotation")
+        if block.series.selection not in {"continue_current_series", "first_series"}:
+            raise ConfigurationError("program_blocks.blocks[].series.selection must be continue_current_series or first_series")
+        if block.series.on_series_end not in {"restart", "next_series", "stop_block"}:
+            raise ConfigurationError("program_blocks.blocks[].series.on_series_end must be restart, next_series, or stop_block")
+        if block.series.max_episode_duration_seconds < 60:
+            raise ConfigurationError("program_blocks.blocks[].series.max_episode_duration must be at least 60 seconds")
     if settings.program_blocks.fillers.max_duration_seconds < 1:
         raise ConfigurationError("program_blocks.fillers.max_duration_seconds must be at least 1")
     if settings.program_blocks.fillers.if_no_filler not in {"continue_current_mode", "start_anchor_late", "skip_anchor"}:
@@ -502,6 +564,14 @@ def _validate_settings(settings: AppSettings) -> None:
         _validate_anchor_time(anchor.time)
     for block in settings.program_blocks.blocks:
         _validate_anchor_time(block.start)
+    for pattern in settings.media.series_detection.custom_patterns:
+        if not pattern.pattern.strip():
+            raise ConfigurationError("media.series_detection.custom_patterns[].pattern must not be empty")
+        for required in ("{seriesName}", "{seasonNo}", "{episodeNo}"):
+            if required not in pattern.pattern:
+                raise ConfigurationError(
+                    "media.series_detection.custom_patterns[] must contain {seriesName}, {seasonNo} and {episodeNo}"
+                )
     if not settings.streaming.output_container.strip():
         raise ConfigurationError("streaming.output_container must not be empty")
     _ = settings.schedule.zoneinfo
@@ -569,6 +639,14 @@ def settings_to_mapping(settings: AppSettings) -> dict:
                     "denied_tags": list(block.denied_tags),
                     "tag_match": block.tag_match,
                     "if_empty": block.if_empty,
+                    "mode": block.mode,
+                    "series": {
+                        "enabled": block.series.enabled,
+                        "selection": block.series.selection,
+                        "on_series_end": block.series.on_series_end,
+                        "max_episode_duration_seconds": block.series.max_episode_duration_seconds,
+                        "remember_position": block.series.remember_position,
+                    },
                 }
                 for block in settings.program_blocks.blocks
             ],
@@ -627,6 +705,14 @@ def settings_to_mapping(settings: AppSettings) -> dict:
                 "main_title_strategy": settings.media.dvd.main_title_strategy,
                 "min_main_title_size_mb": settings.media.dvd.min_main_title_size_mb,
                 "min_main_title_duration_seconds": settings.media.dvd.min_main_title_duration_seconds,
+            },
+            "series_detection": {
+                "enabled": settings.media.series_detection.enabled,
+                "auto_patterns": settings.media.series_detection.auto_patterns,
+                "custom_patterns": [
+                    {"name": item.name, "pattern": item.pattern}
+                    for item in settings.media.series_detection.custom_patterns
+                ],
             },
         },
         "schedule": {

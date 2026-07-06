@@ -430,3 +430,83 @@ def test_schedule_builder_keeps_empty_time_block_when_continue_current_mode() ->
     assert result.entries
     assert result.entries[0].title == "Action Movie"
     assert result.entries[0].start_time == start
+
+
+def _episode(item_id: int, series: str, season: int, episode: int, title: str, duration: int = 1200, *tags: str) -> MediaItem:
+    return MediaItem(
+        id=item_id,
+        source_kind=SourceKind.LOCAL_FILE,
+        source_uri=f"file:///{series}/S{season:02d}E{episode:02d}.mkv",
+        source_root=None,
+        title=title,
+        media_type="episode",
+        duration_seconds=duration,
+        tags=tuple(tags or ("vorabendserie", "episode", "series")),
+        series_title=series,
+        season_number=season,
+        episode_number=episode,
+        episode_title=title,
+        episode_sort_key=f"{series.casefold()}:s{season:04d}:e{episode:04d}",
+    )
+
+
+def _settings_with_series_rotation_block():
+    raw = {
+        "server": {"host": "127.0.0.1", "port": 9988, "public_base_url": "http://127.0.0.1:9988"},
+        "channel": {"id": "privatetv", "name": "PrivateTV"},
+        "program_blocks": {
+            "enabled": True,
+            "blocks": [
+                {
+                    "enabled": True,
+                    "start": "18:00",
+                    "duration": "00:45:00",
+                    "title": "Vorabendserie",
+                    "mode": "series_rotation",
+                    "allowed_tags": ["vorabendserie"],
+                    "series": {"on_series_end": "restart", "remember_position": True},
+                }
+            ],
+        },
+        "media": {"directories": ["tests/fixtures/media"]},
+        "schedule": {"days_ahead": 5, "timezone": "Europe/Berlin", "rebuild_hour": 3, "strategy": "alphabetical"},
+        "streaming": {"max_parallel_streams": 4, "output_container": "mpegts", "prefer_stream_copy": True, "transcode_when_needed": False, "ffmpeg_path": "/usr/bin/ffmpeg", "ffprobe_path": "/usr/bin/ffprobe"},
+        "database": {"path": ":memory:"},
+    }
+    return settings_from_mapping(raw)
+
+
+def test_series_rotation_block_schedules_episodes_in_episode_order() -> None:
+    settings = _settings_with_series_rotation_block()
+    zone = ZoneInfo("Europe/Berlin")
+    start = datetime(2026, 1, 15, 18, 0, tzinfo=zone)
+    items = [
+        _item(50, "Movie", 1800),
+        _episode(3, "ALF", 1, 3, "ALF S01E03"),
+        _episode(1, "ALF", 1, 1, "ALF S01E01"),
+        _episode(2, "ALF", 1, 2, "ALF S01E02"),
+    ]
+
+    result = ScheduleBuilder(settings).build(items, start_at=start, end_at=start + timedelta(hours=1))
+
+    assert [entry.title for entry in result.entries[:3]] == ["ALF S01E01", "ALF S01E02", "ALF S01E03"]
+    assert result.series_rotation_updates[-1].rotation_name == "Vorabendserie"
+    assert result.series_rotation_updates[-1].episode_number == 3
+
+
+def test_series_rotation_continues_from_persisted_state() -> None:
+    from privatetv.domain.models import SeriesRotationSnapshot
+
+    settings = _settings_with_series_rotation_block()
+    zone = ZoneInfo("Europe/Berlin")
+    start = datetime(2026, 1, 15, 18, 0, tzinfo=zone)
+    state = {"Vorabendserie": SeriesRotationSnapshot(series_title="ALF", media_item_id=1, season_number=1, episode_number=1, episode_sort_key="alf:s0001:e0001")}
+    items = [
+        _episode(1, "ALF", 1, 1, "ALF S01E01"),
+        _episode(2, "ALF", 1, 2, "ALF S01E02"),
+        _episode(3, "ALF", 1, 3, "ALF S01E03"),
+    ]
+
+    result = ScheduleBuilder(settings, series_rotation_state=state).build(items, start_at=start, end_at=start + timedelta(minutes=30))
+
+    assert result.entries[0].title == "ALF S01E02"
