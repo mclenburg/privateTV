@@ -372,3 +372,50 @@ def test_dvd_scanner_imports_short_same_vts_pgc_extra_as_generated_filler(tmp_pa
     assert extra.duration_seconds == 75.0
     assert assets[0].role == "dvd_pgc_extra_clip"
     assert assets[0].path.name.endswith("_vts01_pgc002.mp4")
+
+
+def test_dvd_ifo_parser_ignores_implausible_21_hour_pgc_time(tmp_path: Path) -> None:
+    from privatetv.media.dvd_ifo import parse_dvd_ifo_main_title_candidates
+
+    video_ts = tmp_path / "Corinna" / "VIDEO_TS"
+    video_ts.mkdir(parents=True)
+    _write_vmg_ifo(video_ts / "VIDEO_TS.IFO", [2])
+    _write_vts_ifo(video_ts / "VTS_02_0.IFO", [(21, 21, 1)])
+
+    assert parse_dvd_ifo_main_title_candidates(video_ts) == ()
+
+
+def test_dvd_scanner_falls_back_to_concat_probe_when_ifo_duration_is_implausible(
+    tmp_path: Path, monkeypatch
+) -> None:
+    video_ts = tmp_path / "corinna corinna" / "VIDEO_TS"
+    video_ts.mkdir(parents=True)
+    _write_vmg_ifo(video_ts / "VIDEO_TS.IFO", [1, 2])
+    _write_vts_ifo(video_ts / "VTS_01_0.IFO", [(0, 20, 0)])
+    _write_vts_ifo(video_ts / "VTS_02_0.IFO", [(21, 21, 1)])
+    (video_ts / "VTS_01_1.VOB").write_bytes(b"a" * 10)
+    (video_ts / "VTS_02_1.VOB").write_bytes(b"b" * 10)
+    (video_ts / "VTS_02_2.VOB").write_bytes(b"c" * 10)
+    (video_ts / "VTS_02_3.VOB").write_bytes(b"d" * 10)
+    (video_ts / "VTS_02_4.VOB").write_bytes(b"e" * 10)
+
+    def fake_concat_duration(self, files):
+        names = [path.name for path in files]
+        if names and names[0].startswith("VTS_02_"):
+            return 3393.64
+        return 1200.0
+
+    monkeypatch.setattr(DvdStructureScanner, "_probe_title_set_concat_duration", fake_concat_duration)
+
+    items = DvdStructureScanner(_settings(tmp_path), ShortProbe()).scan()
+
+    main, assets = items[0]
+    assert main.media_type == "dvd_main_title"
+    assert main.title == "corinna corinna"
+    assert main.duration_seconds == 3393.64
+    assert [asset.path.name for asset in assets] == [
+        "VTS_02_1.VOB",
+        "VTS_02_2.VOB",
+        "VTS_02_3.VOB",
+        "VTS_02_4.VOB",
+    ]

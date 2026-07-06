@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 SECTOR_SIZE = 2048
+MAX_PLAUSIBLE_PGC_DURATION_SECONDS = 6 * 60 * 60
+
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,10 +191,14 @@ def _read_pgc_play_time(data: bytes, pgc_offset: int) -> float:
 
     # In the DVD-Video PGC header, PGC playback time starts at offset +2.
     # Keep a +4 fallback only for malformed/simplified fixtures where +2 is
-    # empty; preferring +4 can misread the seconds byte as an hour value.
-    primary = _decode_dvd_time(data[pgc_offset + 2 : pgc_offset + 6])
+    # actually empty.  If +2 contains non-zero but invalid/implausible BCD, do
+    # not reinterpret the seconds byte as an hour value.
+    primary_raw = data[pgc_offset + 2 : pgc_offset + 6]
+    primary = _decode_dvd_time(primary_raw)
     if primary > 0:
         return primary
+    if any(primary_raw):
+        return 0.0
     return _decode_dvd_time(data[pgc_offset + 4 : pgc_offset + 8])
 
 
@@ -235,7 +241,10 @@ def _decode_dvd_time(raw: bytes) -> float:
         return 0.0
     if minutes >= 60 or seconds >= 60:
         return 0.0
-    return float(hours * 3600 + minutes * 60 + seconds)
+    duration = float(hours * 3600 + minutes * 60 + seconds)
+    if duration > MAX_PLAUSIBLE_PGC_DURATION_SECONDS:
+        return 0.0
+    return duration
 
 
 def _bcd_to_int(value: int) -> int | None:

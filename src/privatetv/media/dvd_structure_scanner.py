@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import re
 import shutil
@@ -20,6 +21,8 @@ from privatetv.media.dvd_ifo import DvdIfoPgcCandidate, parse_dvd_ifo_main_title
 LOGGER = logging.getLogger(__name__)
 
 _VOB_RE = re.compile(r"^VTS_(?P<title_set>\d{2})_(?P<part>\d)\.VOB$", re.IGNORECASE)
+MAX_PLAUSIBLE_DVD_MAIN_TITLE_DURATION_SECONDS = 6 * 60 * 60
+
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,6 +196,13 @@ class DvdStructureScanner:
             min_duration = self._settings.media.dvd.min_main_title_duration_seconds
             if duration_seconds and duration_seconds < min_duration:
                 return None
+            if duration_seconds and not _is_plausible_dvd_main_duration(duration_seconds):
+                LOGGER.warning(
+                    "Skipping implausible DVD main title %s duration %.3fs",
+                    resolved_video_ts_dir,
+                    duration_seconds,
+                )
+                return None
         else:
             if not _is_dvd_extra_filler_duration(duration_seconds):
                 return None
@@ -263,7 +273,7 @@ class DvdStructureScanner:
             if total_size < min_size_bytes:
                 continue
             ifo_duration = ifo_durations.get(title_set, 0.0)
-            if ifo_duration > 0:
+            if _is_plausible_dvd_main_duration(ifo_duration):
                 duration = ifo_duration
                 source = "ifo-pgc"
             else:
@@ -271,19 +281,27 @@ class DvdStructureScanner:
                 source = "probe"
             if duration > 0 and duration < min_duration:
                 continue
+            if not _is_plausible_dvd_main_duration(duration):
+                LOGGER.warning(
+                    "Ignoring implausible DVD main-title candidate %s VTS %s duration %.3fs",
+                    video_ts_dir,
+                    title_set,
+                    duration,
+                )
+                continue
             candidates.append(DvdTitleSet(title_set, files, total_size, duration, source))
 
         if not candidates:
             return None
-        # Prefer the DVD navigation table's longest PGC because this is how a
-        # player knows the actual programme chain.  If IFO metadata is missing
-        # or broken, fall back to probed duration and finally total VOB size.
+        # Pick the longest plausible playable title.  IFO metadata is preferred
+        # only as a tie-breaker, not as an absolute trump card: some authored or
+        # copied DVDs contain bogus PGC times such as 21:21:01.  Those values are
+        # rejected above and the VOB concat probe becomes the safer fallback.
         return max(
             candidates,
             key=lambda candidate: (
-                candidate.duration_source == "ifo-pgc",
-                candidate.total_duration_seconds > 0,
                 candidate.total_duration_seconds,
+                candidate.duration_source == "ifo-pgc",
                 candidate.total_size_bytes,
             ),
         )
@@ -495,6 +513,9 @@ class DvdStructureScanner:
             temp_path.unlink(missing_ok=True)
 
     def _probe_title_set_duration(self, files: tuple[Path, ...]) -> float:
+        concat_duration = self._probe_title_set_concat_duration(files)
+        if concat_duration >= 1.0:
+            return concat_duration
         duration = 0.0
         for path in files:
             try:
@@ -502,6 +523,39 @@ class DvdStructureScanner:
             except ProbeError:
                 continue
         return duration
+
+    def _probe_title_set_concat_duration(self, files: tuple[Path, ...]) -> float:
+        if not files:
+            return 0.0
+        ffprobe = str(self._settings.streaming.ffprobe_path)
+        concat_uri = "concat:" + "|".join(path.as_posix() for path in files)
+        try:
+            completed = subprocess.run(
+                [
+                    ffprobe,
+                    "-v",
+                    "error",
+                    "-print_format",
+                    "json",
+                    "-show_format",
+                    "-i",
+                    concat_uri,
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return 0.0
+        if completed.returncode != 0:
+            return 0.0
+        try:
+            payload = json.loads(completed.stdout)
+            raw_duration = (payload.get("format") or {}).get("duration")
+            return float(raw_duration) if raw_duration is not None else 0.0
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return 0.0
 
 
 
@@ -563,3 +617,7 @@ def _first_present(values) -> str | None:
 
 def _is_dvd_extra_filler_duration(duration_seconds: float) -> bool:
     return 15 <= duration_seconds <= 600
+
+
+def _is_plausible_dvd_main_duration(duration_seconds: float) -> bool:
+    return 0 < duration_seconds <= MAX_PLAUSIBLE_DVD_MAIN_TITLE_DURATION_SECONDS
