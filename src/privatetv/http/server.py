@@ -24,7 +24,7 @@ from privatetv.http.keys import (
     STREAM_STATE_KEY,
 )
 from privatetv.schedule import ScheduleMaintainer, resolve_current_programme
-from privatetv.streaming import PerClientFfmpegStreamProvider, StreamProvider
+from privatetv.streaming import PerClientFfmpegStreamProvider, SharedLiveFfmpegStreamProvider, StreamProvider
 from privatetv.streaming.ffmpeg import StreamPreparationError
 from privatetv.tvh import render_empty_xmltv, render_m3u, render_xmltv
 from privatetv.util.time import now_in_zone
@@ -67,12 +67,13 @@ def create_app(
 ) -> web.Application:
     """Create the aiohttp application used by the PrivateTV service."""
     app = web.Application()
-    provider = stream_provider or PerClientFfmpegStreamProvider(settings)
+    provider = stream_provider or SharedLiveFfmpegStreamProvider(settings)
+    hazard_stream_provider = PerClientFfmpegStreamProvider(settings)
     app[RUNTIME_KEY] = {
         "settings": settings,
         "stream_state": StreamState(settings.streaming.max_parallel_streams),
         "stream_provider": provider,
-        "hazard_provider": hazard_provider or HazardRandomStreamProvider(settings, provider),
+        "hazard_provider": hazard_provider or HazardRandomStreamProvider(settings, hazard_stream_provider),
     }
     # Keep initial legacy app keys for tests/extensions that may still inspect the app mapping.
     # Runtime updates mutate app[RUNTIME_KEY] instead of the started aiohttp app mapping.

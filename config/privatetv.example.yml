@@ -110,6 +110,31 @@ program_blocks:
     max_duration_seconds: 60
     title: "Gleich geht's weiter"
 
+  generated_promos:
+    enabled: false
+    duration_min_seconds: 15
+    duration_max_seconds: 30
+    lookahead_hours: 72
+    min_gap_minutes: 20
+    max_per_hour: 2
+    next_up:
+      enabled: false
+      title_template: "Als nächstes"
+      include_air_time: false
+    coming_soon:
+      enabled: false
+      title_template: "Coming soon"
+      include_air_time: true
+    promotable:
+      min_duration_seconds: 300
+      denied_tags:
+        - "filler"
+        - "commercial"
+        - "bumper"
+        - "trailer"
+        - "countdown"
+        - "promo"
+
 streaming:
   max_parallel_streams: 4
   output_container: "mpegts"

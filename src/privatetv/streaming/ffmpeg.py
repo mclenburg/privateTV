@@ -184,6 +184,214 @@ class PerClientFfmpegStreamProvider(StreamProvider):
                 concat_file.unlink(missing_ok=True)
 
 
+class SharedLiveFfmpegStreamProvider(StreamProvider):
+    """Shares one live FFmpeg process between all main-channel clients.
+
+    This provider is intended for the linear PrivateTV main channel only. Every
+    subscriber joins the same currently running MPEG-TS byte stream. Hazard TV
+    deliberately keeps using ``PerClientFfmpegStreamProvider`` so each viewer can
+    receive an independent random movie from the beginning.
+    """
+
+    def __init__(self, settings: AppSettings, *, chunk_size: int = DEFAULT_CHUNK_SIZE) -> None:
+        self._settings = settings
+        self._factory = FfmpegCommandFactory(settings)
+        self._chunk_size = chunk_size
+        self._lock = asyncio.Lock()
+        self._session: _SharedFfmpegSession | None = None
+
+    async def open_stream(
+        self,
+        programme: CurrentProgramme,
+        assets: Sequence[MediaAsset],
+    ) -> AsyncIterator[bytes]:
+        session = await self._get_or_create_session(programme, assets)
+        async for chunk in session.subscribe():
+            yield chunk
+
+    async def _get_or_create_session(
+        self,
+        programme: CurrentProgramme,
+        assets: Sequence[MediaAsset],
+    ) -> "_SharedFfmpegSession":
+        async with self._lock:
+            key = _programme_key(programme)
+            if self._session is None or not self._session.matches(key) or self._session.closed:
+                if self._session is not None:
+                    await self._session.close()
+                self._session = _SharedFfmpegSession(
+                    self._settings,
+                    self._factory,
+                    programme,
+                    assets,
+                    chunk_size=self._chunk_size,
+                    on_closed=self._clear_session,
+                )
+            return self._session
+
+    def _clear_session(self, session: "_SharedFfmpegSession") -> None:
+        if self._session is session:
+            self._session = None
+
+
+class _SharedFfmpegSession:
+    """Runtime fanout session for a single scheduled main-channel programme."""
+
+    def __init__(
+        self,
+        settings: AppSettings,
+        factory: FfmpegCommandFactory,
+        programme: CurrentProgramme,
+        assets: Sequence[MediaAsset],
+        *,
+        chunk_size: int,
+        on_closed,
+    ) -> None:
+        self._settings = settings
+        self._factory = factory
+        self._programme = programme
+        self._assets = tuple(assets)
+        self._chunk_size = chunk_size
+        self._on_closed = on_closed
+        self._key = _programme_key(programme)
+        self._subscribers: set[asyncio.Queue[bytes | None]] = set()
+        self._lock = asyncio.Lock()
+        self._process: asyncio.subprocess.Process | None = None
+        self._reader_task: asyncio.Task[None] | None = None
+        self._stderr_task: asyncio.Task[None] | None = None
+        self._concat_file: Path | None = None
+        self._closed = False
+
+    @property
+    def closed(self) -> bool:
+        return self._closed
+
+    def matches(self, key: tuple[object, ...]) -> bool:
+        return self._key == key and not self._closed
+
+    async def subscribe(self) -> AsyncIterator[bytes]:
+        queue: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=32)
+        async with self._lock:
+            if self._closed:
+                raise StreamPreparationError("Shared main-channel stream is already closed")
+            self._subscribers.add(queue)
+            await self._ensure_started()
+        LOGGER.info(
+            "Main channel subscriber joined shared stream title=%r subscribers=%s",
+            self._programme.schedule_entry.title,
+            len(self._subscribers),
+        )
+        try:
+            while True:
+                chunk = await queue.get()
+                if chunk is None:
+                    break
+                yield chunk
+        finally:
+            await self._unsubscribe(queue)
+
+    async def close(self) -> None:
+        async with self._lock:
+            await self._close_locked()
+
+    async def _ensure_started(self) -> None:
+        if self._process is not None:
+            return
+        if self._programme.media.source_kind == SourceKind.DVD_STRUCTURE:
+            self._concat_file = _write_concat_file(self._assets)
+        command = self._factory.build(self._programme, self._assets, concat_file=self._concat_file)
+        self._process = await asyncio.create_subprocess_exec(
+            *command.argv,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        LOGGER.info(
+            "Started shared FFmpeg main stream pid=%s title=%r offset=%.3fs tolerance=%ss",
+            self._process.pid,
+            self._programme.schedule_entry.title,
+            self._programme.offset_seconds,
+            command.seek_tolerance_seconds,
+        )
+        self._stderr_task = asyncio.create_task(_log_stderr(self._process))
+        self._reader_task = asyncio.create_task(self._fanout_stdout())
+
+    async def _fanout_stdout(self) -> None:
+        process = self._process
+        try:
+            if process is None or process.stdout is None:
+                raise StreamPreparationError("FFmpeg stdout pipe is not available")
+            while True:
+                chunk = await process.stdout.read(self._chunk_size)
+                if not chunk:
+                    break
+                await self._publish(chunk)
+        except asyncio.CancelledError:  # pragma: no cover - normal shutdown path
+            raise
+        except Exception:
+            LOGGER.exception("Shared main-channel FFmpeg fanout failed")
+        finally:
+            await self._notify_end()
+            await self.close()
+
+    async def _publish(self, chunk: bytes) -> None:
+        subscribers = tuple(self._subscribers)
+        if not subscribers:
+            return
+        await asyncio.gather(*(queue.put(chunk) for queue in subscribers))
+
+    async def _notify_end(self) -> None:
+        subscribers = tuple(self._subscribers)
+        await asyncio.gather(*(queue.put(None) for queue in subscribers), return_exceptions=True)
+
+    async def _unsubscribe(self, queue: asyncio.Queue[bytes | None]) -> None:
+        async with self._lock:
+            self._subscribers.discard(queue)
+            subscriber_count = len(self._subscribers)
+            LOGGER.info(
+                "Main channel subscriber left shared stream title=%r subscribers=%s",
+                self._programme.schedule_entry.title,
+                subscriber_count,
+            )
+            if subscriber_count == 0:
+                await self._close_locked()
+
+    async def _close_locked(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        reader_task = self._reader_task
+        self._reader_task = None
+        if reader_task is not None and reader_task is not asyncio.current_task():
+            # Do not await the reader task while holding the session lock. A
+            # cancelled reader runs its own cleanup path and would otherwise try
+            # to re-enter close(), deadlocking the final subscriber disconnect.
+            reader_task.cancel()
+        process = self._process
+        self._process = None
+        if process is not None:
+            await _terminate_process(process)
+        stderr_task = self._stderr_task
+        self._stderr_task = None
+        if stderr_task is not None:
+            await _finish_stderr_task(stderr_task)
+        if self._concat_file is not None:
+            self._concat_file.unlink(missing_ok=True)
+            self._concat_file = None
+        self._on_closed(self)
+
+
+def _programme_key(programme: CurrentProgramme) -> tuple[object, ...]:
+    entry = programme.schedule_entry
+    return (
+        entry.channel_id,
+        entry.id,
+        entry.media_item_id,
+        entry.start_time.isoformat(),
+        entry.end_time.isoformat(),
+        entry.start_offset_seconds,
+    )
+
+
 def _primary_asset_path(programme: CurrentProgramme, assets: Sequence[MediaAsset]) -> Path:
     for asset in sorted(assets, key=lambda item: item.asset_order):
         if asset.role == "primary":

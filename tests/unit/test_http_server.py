@@ -11,7 +11,8 @@ from privatetv.config import settings_from_mapping
 from privatetv.db import MediaRepository, ScheduleRepository, connect_database, initialize_database
 from privatetv.domain.models import CurrentProgramme, MediaAsset, MediaItem, ScheduleEntry, SourceKind
 from privatetv.http import create_app
-from privatetv.streaming import StreamProvider
+from privatetv.http.keys import RUNTIME_KEY
+from privatetv.streaming import PerClientFfmpegStreamProvider, SharedLiveFfmpegStreamProvider, StreamProvider
 
 
 class FakeStreamProvider(StreamProvider):
@@ -89,6 +90,16 @@ async def _get_bytes(settings, path: str) -> tuple[int, str, bytes]:
     finally:
         await client.close()
 
+
+
+def test_create_app_uses_shared_provider_only_for_main_channel(tmp_path: Path) -> None:
+    settings = _hazard_settings(tmp_path)
+
+    app = create_app(settings)
+    runtime = app[RUNTIME_KEY]
+
+    assert isinstance(runtime["stream_provider"], SharedLiveFfmpegStreamProvider)
+    assert isinstance(runtime["hazard_provider"]._stream_provider, PerClientFfmpegStreamProvider)
 
 def test_http_logo_endpoints_serve_builtin_channel_logos(tmp_path: Path) -> None:
     settings = _hazard_settings(tmp_path)

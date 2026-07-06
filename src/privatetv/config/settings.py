@@ -115,6 +115,35 @@ class GeneratedCountdownSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class GeneratedPromoVariantSettings:
+    enabled: bool = False
+    title_template: str = "Coming soon"
+    include_air_time: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class GeneratedPromosSettings:
+    enabled: bool = False
+    duration_min_seconds: int = 15
+    duration_max_seconds: int = 30
+    next_up: GeneratedPromoVariantSettings = field(
+        default_factory=lambda: GeneratedPromoVariantSettings(
+            enabled=False, title_template="Als nächstes", include_air_time=False
+        )
+    )
+    coming_soon: GeneratedPromoVariantSettings = field(
+        default_factory=lambda: GeneratedPromoVariantSettings(
+            enabled=False, title_template="Coming soon", include_air_time=True
+        )
+    )
+    lookahead_hours: int = 72
+    min_gap_minutes: int = 20
+    max_per_hour: int = 2
+    promotable_min_duration_seconds: int = 300
+    promotable_denied_tags: tuple[str, ...] = ("filler", "commercial", "bumper", "trailer", "countdown", "promo")
+
+
+@dataclass(frozen=True, slots=True)
 class FillerSettings:
     enabled: bool = False
     directories: tuple[Path, ...] = ()
@@ -137,6 +166,7 @@ class ProgramBlocksSettings:
     blocks: tuple[ProgramBlockSettings, ...] = ()
     fillers: FillerSettings = field(default_factory=FillerSettings)
     generated_countdown: GeneratedCountdownSettings = field(default_factory=GeneratedCountdownSettings)
+    generated_promos: GeneratedPromosSettings = field(default_factory=GeneratedPromosSettings)
 
 
 @dataclass(frozen=True, slots=True)
@@ -272,6 +302,7 @@ def _program_blocks_from_mapping(raw: dict) -> ProgramBlocksSettings:
     blocks = tuple(_program_block_from_mapping(item) for item in raw.get("blocks", []) or [])
     fillers = raw.get("fillers", {}) or {}
     countdown = raw.get("generated_countdown", {}) or {}
+    promos = raw.get("generated_promos", {}) or {}
     return ProgramBlocksSettings(
         enabled=bool(raw.get("enabled", False)),
         anchors=anchors,
@@ -294,6 +325,40 @@ def _program_blocks_from_mapping(raw: dict) -> ProgramBlocksSettings:
             enabled=bool(countdown.get("enabled", False)),
             max_duration_seconds=int(countdown.get("max_duration_seconds", 60)),
             title=str(countdown.get("title", "Gleich geht's weiter")),
+        ),
+        generated_promos=_generated_promos_from_mapping(promos),
+    )
+
+
+def _generated_promos_from_mapping(raw: dict) -> GeneratedPromosSettings:
+    next_up = raw.get("next_up", {}) or {}
+    coming_soon = raw.get("coming_soon", {}) or {}
+    promotable = raw.get("promotable", {}) or {}
+    return GeneratedPromosSettings(
+        enabled=bool(raw.get("enabled", False)),
+        duration_min_seconds=int(raw.get("duration_min_seconds", 15)),
+        duration_max_seconds=int(raw.get("duration_max_seconds", 30)),
+        next_up=GeneratedPromoVariantSettings(
+            enabled=bool(next_up.get("enabled", False)),
+            title_template=str(next_up.get("title_template", "Als nächstes")),
+            include_air_time=bool(next_up.get("include_air_time", False)),
+        ),
+        coming_soon=GeneratedPromoVariantSettings(
+            enabled=bool(coming_soon.get("enabled", False)),
+            title_template=str(coming_soon.get("title_template", "Coming soon")),
+            include_air_time=bool(coming_soon.get("include_air_time", True)),
+        ),
+        lookahead_hours=int(raw.get("lookahead_hours", 72)),
+        min_gap_minutes=int(raw.get("min_gap_minutes", 20)),
+        max_per_hour=int(raw.get("max_per_hour", 2)),
+        promotable_min_duration_seconds=int(promotable.get("min_duration_seconds", raw.get("promotable_min_duration_seconds", 300))),
+        promotable_denied_tags=tuple(
+            _normalize_tag(item)
+            for item in promotable.get(
+                "denied_tags",
+                raw.get("promotable_denied_tags", ["filler", "commercial", "bumper", "trailer", "countdown", "promo"]),
+            )
+            or []
         ),
     )
 
@@ -398,6 +463,15 @@ def _validate_settings(settings: AppSettings) -> None:
         raise ConfigurationError("program_blocks.generated_countdown.max_duration_seconds must be at least 1")
     if settings.program_blocks.generated_countdown.max_duration_seconds > 60:
         raise ConfigurationError("program_blocks.generated_countdown.max_duration_seconds must not be greater than 60")
+    promos = settings.program_blocks.generated_promos
+    if promos.duration_min_seconds < 1:
+        raise ConfigurationError("program_blocks.generated_promos.duration_min_seconds must be at least 1")
+    if promos.duration_max_seconds < promos.duration_min_seconds:
+        raise ConfigurationError("program_blocks.generated_promos.duration_max_seconds must not be smaller than duration_min_seconds")
+    if promos.duration_max_seconds > 60:
+        raise ConfigurationError("program_blocks.generated_promos.duration_max_seconds must not be greater than 60")
+    if promos.promotable_min_duration_seconds < 1:
+        raise ConfigurationError("program_blocks.generated_promos.promotable.min_duration_seconds must be at least 1")
     for anchor in settings.program_blocks.anchors:
         if anchor.tag_match not in {"any", "all"}:
             raise ConfigurationError("program_blocks.anchors[].tag_match must be any or all")
@@ -516,6 +590,28 @@ def settings_to_mapping(settings: AppSettings) -> dict:
                 "enabled": settings.program_blocks.generated_countdown.enabled,
                 "max_duration_seconds": settings.program_blocks.generated_countdown.max_duration_seconds,
                 "title": settings.program_blocks.generated_countdown.title,
+            },
+            "generated_promos": {
+                "enabled": settings.program_blocks.generated_promos.enabled,
+                "duration_min_seconds": settings.program_blocks.generated_promos.duration_min_seconds,
+                "duration_max_seconds": settings.program_blocks.generated_promos.duration_max_seconds,
+                "lookahead_hours": settings.program_blocks.generated_promos.lookahead_hours,
+                "min_gap_minutes": settings.program_blocks.generated_promos.min_gap_minutes,
+                "max_per_hour": settings.program_blocks.generated_promos.max_per_hour,
+                "next_up": {
+                    "enabled": settings.program_blocks.generated_promos.next_up.enabled,
+                    "title_template": settings.program_blocks.generated_promos.next_up.title_template,
+                    "include_air_time": settings.program_blocks.generated_promos.next_up.include_air_time,
+                },
+                "coming_soon": {
+                    "enabled": settings.program_blocks.generated_promos.coming_soon.enabled,
+                    "title_template": settings.program_blocks.generated_promos.coming_soon.title_template,
+                    "include_air_time": settings.program_blocks.generated_promos.coming_soon.include_air_time,
+                },
+                "promotable": {
+                    "min_duration_seconds": settings.program_blocks.generated_promos.promotable_min_duration_seconds,
+                    "denied_tags": list(settings.program_blocks.generated_promos.promotable_denied_tags),
+                },
             },
         },
         "media": {

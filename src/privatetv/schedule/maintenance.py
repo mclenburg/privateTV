@@ -8,6 +8,7 @@ from privatetv.config import AppSettings
 from privatetv.db import ScheduleRepository
 from privatetv.schedule.builder import ScheduleBuilder
 from privatetv.schedule.countdown import ensure_generated_countdown_media
+from privatetv.schedule.promos import PromoGenerator
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,7 +91,8 @@ class ScheduleMaintainer:
                 inserted_entries=0,
             )
 
-        build_result = ScheduleBuilder(self._settings).build(
+        promo_generator = PromoGenerator(connection, self._settings)
+        build_result = ScheduleBuilder(self._settings, promo_factory=promo_generator.create).build(
             media_items,
             start_at=start_at,
             end_at=target_until,

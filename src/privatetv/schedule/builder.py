@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
 
 from privatetv.config import AppSettings, ProgramBlockAnchorSettings, ProgramBlockSettings
 from privatetv.domain.models import MediaItem, ScheduleEntry, SourceKind
 from privatetv.schedule.countdown import COUNTDOWN_DURATION_SECONDS
+from privatetv.schedule.promos import PromoRequest
 from privatetv.schedule.strategy import create_schedule_strategy
 
-FILLER_MEDIA_TYPES = frozenset({"filler", "trailer", "bumper", "commercial", "advertisement", "dvd_preview"})
+FILLER_MEDIA_TYPES = frozenset({"filler", "trailer", "bumper", "commercial", "advertisement", "dvd_preview", "generated_promo"})
+
+PromoFactory = Callable[[PromoRequest], MediaItem | None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,8 +25,9 @@ class ScheduleBuildResult:
 class ScheduleBuilder:
     """Builds a continuous linear schedule from enabled media items."""
 
-    def __init__(self, settings: AppSettings) -> None:
+    def __init__(self, settings: AppSettings, *, promo_factory: PromoFactory | None = None) -> None:
         self._settings = settings
+        self._promo_factory = promo_factory
 
     def build(
         self,
@@ -308,6 +313,25 @@ class ScheduleBuilder:
         reserve = self._countdown_reserve_seconds(countdown_item, remaining)
         last_id = last_filler_id
 
+        # Optional TV-style promo near the start of a larger bridge. Promos are
+        # generated only for real programme items; the PromoGenerator rejects
+        # fillers, bumpers, trailers, countdowns and other generated promos.
+        if remaining >= reserve + self._settings.program_blocks.generated_promos.duration_min_seconds + 300:
+            promo = self._build_generated_promo_entry(
+                kind="coming_soon",
+                target_item=next_item,
+                start_at=cursor,
+                air_time=anchor_time,
+                budget_seconds=min(
+                    float(self._settings.program_blocks.generated_promos.duration_max_seconds),
+                    remaining - reserve,
+                ),
+            )
+            if promo is not None:
+                entries.append(promo)
+                cursor = promo.end_time
+                remaining = (anchor_time - cursor).total_seconds()
+
         while remaining > reserve:
             block_budget = remaining - reserve
             if _between_programmes_enabled(self._settings):
@@ -335,6 +359,23 @@ class ScheduleBuilder:
                     break
 
         remaining = (anchor_time - cursor).total_seconds()
+        reserve = self._countdown_reserve_seconds(countdown_item, remaining)
+        if remaining > reserve:
+            promo = self._build_generated_promo_entry(
+                kind="next_up",
+                target_item=next_item,
+                start_at=cursor,
+                air_time=anchor_time,
+                budget_seconds=min(
+                    float(self._settings.program_blocks.generated_promos.duration_max_seconds),
+                    remaining - reserve,
+                ),
+            )
+            if promo is not None:
+                entries.append(promo)
+                cursor = promo.end_time
+                remaining = (anchor_time - cursor).total_seconds()
+
         if countdown_item is not None and 0 < remaining <= max_countdown:
             entries.append(self._countdown_entry(countdown_item, start_at=cursor, anchor_time=anchor_time, anchor=anchor))
 
@@ -343,6 +384,33 @@ class ScheduleBuilder:
         if _between_programmes_enabled(self._settings):
             return entries
         return entries
+
+    def _build_generated_promo_entry(
+        self,
+        *,
+        kind: str,
+        target_item: MediaItem,
+        start_at: datetime,
+        air_time: datetime,
+        budget_seconds: float,
+    ) -> ScheduleEntry | None:
+        promos = self._settings.program_blocks.generated_promos
+        if self._promo_factory is None or not (self._settings.program_blocks.enabled and promos.enabled):
+            return None
+        variant = promos.next_up if kind == "next_up" else promos.coming_soon
+        if not variant.enabled:
+            return None
+        duration = int(min(promos.duration_max_seconds, max(promos.duration_min_seconds, budget_seconds)))
+        if duration > budget_seconds or duration < promos.duration_min_seconds:
+            return None
+        item = self._promo_factory(
+            PromoRequest(kind=kind, target=target_item, air_time=air_time, duration_seconds=duration)
+        )
+        if item is None or item.id is None:
+            return None
+        stop = start_at + timedelta(seconds=float(item.duration_seconds))
+        return _entry_for_item(self._settings.channel.id, item, start_at, stop)
+
 
     def _build_filler_block(
         self,
