@@ -32,8 +32,6 @@ CREATE TABLE IF NOT EXISTS media_item (
     UNIQUE(source_kind, source_uri)
 );
 
-CREATE INDEX IF NOT EXISTS idx_media_item_series
-ON media_item(series_title, season_number, episode_number);
 
 CREATE TABLE IF NOT EXISTS media_asset (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
