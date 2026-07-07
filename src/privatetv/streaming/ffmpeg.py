@@ -14,6 +14,7 @@ from privatetv.streaming.provider import StreamProvider
 
 LOGGER = logging.getLogger(__name__)
 DEFAULT_CHUNK_SIZE = 64 * 1024
+SUBSCRIBER_PUT_TIMEOUT_SECONDS = 0.25
 
 
 class StreamPreparationError(PrivateTvError):
@@ -337,16 +338,47 @@ class _SharedFfmpegSession:
         subscribers = tuple(self._subscribers)
         if not subscribers:
             return
-        await asyncio.gather(*(queue.put(chunk) for queue in subscribers))
+        stalled: list[asyncio.Queue[bytes | None]] = []
+        for queue in subscribers:
+            if queue not in self._subscribers:
+                continue
+            try:
+                await asyncio.wait_for(queue.put(chunk), timeout=SUBSCRIBER_PUT_TIMEOUT_SECONDS)
+            except asyncio.TimeoutError:
+                stalled.append(queue)
+            except RuntimeError:
+                stalled.append(queue)
+        for queue in stalled:
+            await self._evict_subscriber(queue, reason="subscriber queue stalled")
 
     async def _notify_end(self) -> None:
         subscribers = tuple(self._subscribers)
-        await asyncio.gather(*(queue.put(None) for queue in subscribers), return_exceptions=True)
+        for queue in subscribers:
+            _close_subscriber_queue(queue)
+
+    async def _evict_subscriber(self, queue: asyncio.Queue[bytes | None], *, reason: str) -> None:
+        async with self._lock:
+            if queue not in self._subscribers:
+                return
+            self._subscribers.discard(queue)
+            _close_subscriber_queue(queue)
+            subscriber_count = len(self._subscribers)
+            LOGGER.warning(
+                "Evicted stalled main-channel subscriber title=%r reason=%s subscribers=%s",
+                self._programme.schedule_entry.title,
+                reason,
+                subscriber_count,
+            )
+            if subscriber_count == 0:
+                await self._close_locked()
 
     async def _unsubscribe(self, queue: asyncio.Queue[bytes | None]) -> None:
         async with self._lock:
+            removed = queue in self._subscribers
             self._subscribers.discard(queue)
             subscriber_count = len(self._subscribers)
+            if not removed:
+                return
             LOGGER.info(
                 "Main channel subscriber left shared stream title=%r subscribers=%s",
                 self._programme.schedule_entry.title,
@@ -378,6 +410,22 @@ class _SharedFfmpegSession:
             self._concat_file.unlink(missing_ok=True)
             self._concat_file = None
         self._on_closed(self)
+
+
+def _close_subscriber_queue(queue: asyncio.Queue[bytes | None]) -> None:
+    try:
+        queue.put_nowait(None)
+        return
+    except asyncio.QueueFull:
+        pass
+    try:
+        queue.get_nowait()
+    except asyncio.QueueEmpty:
+        pass
+    try:
+        queue.put_nowait(None)
+    except asyncio.QueueFull:  # pragma: no cover - defensive fallback
+        pass
 
 
 def _programme_key(programme: CurrentProgramme) -> tuple[object, ...]:

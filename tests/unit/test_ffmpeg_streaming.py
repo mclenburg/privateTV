@@ -200,3 +200,33 @@ def test_ffmpeg_dvd_command_transcodes_when_stream_copy_is_disabled(tmp_path: Pa
     assert "libx264" in command.argv
     assert "-c:a" in command.argv
     assert "aac" in command.argv
+
+import asyncio
+
+from privatetv.streaming.ffmpeg import _SharedFfmpegSession
+
+
+def test_shared_main_fanout_evicts_stalled_subscriber_without_blocking(tmp_path: Path) -> None:
+    async def run() -> None:
+        settings = _settings(tmp_path)
+        programme = _programme(SourceKind.LOCAL_FILE, (tmp_path / "movie.mp4").as_uri())
+        session = _SharedFfmpegSession(
+            settings,
+            FfmpegCommandFactory(settings),
+            programme,
+            (),
+            chunk_size=16,
+            on_closed=lambda _session: None,
+        )
+        healthy: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=1)
+        stalled: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=1)
+        stalled.put_nowait(b"already full")
+        session._subscribers.update({healthy, stalled})
+
+        await asyncio.wait_for(session._publish(b"chunk"), timeout=1.0)
+
+        assert await healthy.get() == b"chunk"
+        assert healthy in session._subscribers
+        assert stalled not in session._subscribers
+
+    asyncio.run(run())

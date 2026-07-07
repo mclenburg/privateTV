@@ -13,6 +13,7 @@ from privatetv.schedule.strategy import create_schedule_strategy
 
 FILLER_MEDIA_TYPES = frozenset({"filler", "generated_countdown", "generated_promo", "dvd_extra_filler", "dvd_pgc_extra_filler", "trailer", "bumper", "commercial", "advertisement", "dvd_preview"})
 MIN_NORMAL_PROGRAMME_DURATION_SECONDS = 60.0
+MAIN_CONTENT_REPEAT_THRESHOLD = 0.80
 
 PromoFactory = Callable[[PromoRequest], MediaItem | None]
 
@@ -39,6 +40,10 @@ class ScheduleBuilder:
         self._promo_factory = promo_factory
         self._series_rotation_state = dict(series_rotation_state or {})
         self._series_rotation_updates: dict[str, SeriesRotationUpdate] = {}
+        self._main_content_usage_counts: dict[int, int] = {}
+        self._main_content_used_ids: set[int] = set()
+        self._main_content_used_by_day: dict[object, set[int]] = {}
+        self._last_main_content_id: int | None = None
 
     def build(
         self,
@@ -101,11 +106,16 @@ class ScheduleBuilder:
 
                 active_anchor = _anchor_at(self._settings.program_blocks.anchors, current)
                 active_block = _active_block_at(self._settings.program_blocks.blocks, current)
+                repeat_guard_pool = ordered
                 if active_anchor is not None:
-                    preferred_item = _first_matching_anchor_item(ordered, active_anchor) or preferred_item
+                    anchor_matches = [item for item in ordered if _matches_anchor_tags(item, active_anchor)]
+                    repeat_guard_pool = anchor_matches or ordered
+                    preferred_item = (anchor_matches[0] if anchor_matches else None) or preferred_item
                 elif active_block is not None:
+                    block_matches = [item for item in ordered if _matches_block_tags(item, active_block)]
+                    repeat_guard_pool = block_matches or ordered
                     series_item = self._choose_series_rotation_item(ordered, active_block, current)
-                    preferred_item = series_item or _first_matching_block_item(ordered, active_block) or preferred_item
+                    preferred_item = series_item or (block_matches[0] if block_matches else None) or preferred_item
 
                 item = self._choose_item_for_program_block_window(
                     preferred_item=preferred_item,
@@ -120,6 +130,8 @@ class ScheduleBuilder:
                     target_end=target_end,
                     countdown_item=countdown_item,
                 )
+                if _is_repeat_guarded_main_item(item):
+                    item = self._select_main_content(repeat_guard_pool, moment=current, preferred_item=item) or item
 
                 bridge_entries = self._build_anchor_bridge_entries(
                     filler_candidates=filler_strategy.order(filler_candidates),
@@ -140,15 +152,25 @@ class ScheduleBuilder:
                         break
                     active_anchor = _anchor_at(self._settings.program_blocks.anchors, current)
                     active_block = _active_block_at(self._settings.program_blocks.blocks, current)
+                    repeat_guard_pool = ordered
                     if active_anchor is not None:
-                        item = _first_matching_anchor_item(ordered, active_anchor) or item
+                        anchor_matches = [candidate for candidate in ordered if _matches_anchor_tags(candidate, active_anchor)]
+                        repeat_guard_pool = anchor_matches or ordered
+                        item = (anchor_matches[0] if anchor_matches else None) or item
                     elif active_block is not None:
+                        block_matches = [candidate for candidate in ordered if _matches_block_tags(candidate, active_block)]
+                        repeat_guard_pool = block_matches or ordered
                         series_item = self._choose_series_rotation_item(ordered, active_block, current)
-                        item = series_item or _first_matching_block_item(ordered, active_block) or item
+                        item = series_item or (block_matches[0] if block_matches else None) or item
+                    if _is_repeat_guarded_main_item(item):
+                        item = self._select_main_content(repeat_guard_pool, moment=current, preferred_item=item) or item
 
                 self._remember_series_rotation_if_needed(item, active_block, current)
+                self._remember_main_content_if_needed(item, current)
                 duration = timedelta(seconds=float(item.duration_seconds))
                 stop = current + duration
+                if stop <= current:
+                    continue
                 entries.append(_entry_for_item(self._settings.channel.id, item, current, stop))
                 current = stop
 
@@ -173,6 +195,65 @@ class ScheduleBuilder:
             target_end,
             tuple(self._series_rotation_updates.values()),
         )
+
+    def _select_main_content(
+        self,
+        pool: list[MediaItem],
+        *,
+        moment: datetime,
+        preferred_item: MediaItem | None = None,
+    ) -> MediaItem | None:
+        if not pool:
+            return None
+        repeat_guarded = [item for item in pool if _is_repeat_guarded_main_item(item)]
+        if not repeat_guarded:
+            return preferred_item if preferred_item in pool else pool[0]
+
+        guarded_ids = {int(item.id) for item in repeat_guarded if item.id is not None}
+        used_in_pool = guarded_ids & self._main_content_used_ids
+        repeat_cycle_open = len(used_in_pool) >= max(1, int(len(guarded_ids) * MAIN_CONTENT_REPEAT_THRESHOLD + 0.999))
+        used_today = self._main_content_used_by_day.get(moment.date(), set())
+
+        preferred_allowed = (
+            preferred_item in repeat_guarded
+            and _main_content_allowed_by_repeat_guard(
+                preferred_item,
+                used_in_pool=used_in_pool,
+                used_today=used_today,
+                repeat_cycle_open=repeat_cycle_open,
+                last_main_content_id=self._last_main_content_id,
+            )
+        )
+        if preferred_allowed:
+            return preferred_item
+
+        allowed = [
+            item
+            for item in repeat_guarded
+            if _main_content_allowed_by_repeat_guard(
+                item,
+                used_in_pool=used_in_pool,
+                used_today=used_today,
+                repeat_cycle_open=repeat_cycle_open,
+                last_main_content_id=self._last_main_content_id,
+            )
+        ]
+        if allowed:
+            return _best_main_content_candidate(allowed, self._main_content_usage_counts)
+
+        # Emergency fallback: keep the channel running if there is truly no clean
+        # alternative.  Still avoid immediate repetition where possible.
+        not_immediate = [item for item in repeat_guarded if int(item.id) != self._last_main_content_id]
+        return _best_main_content_candidate(not_immediate or repeat_guarded, self._main_content_usage_counts)
+
+    def _remember_main_content_if_needed(self, item: MediaItem, moment: datetime) -> None:
+        if not _is_repeat_guarded_main_item(item):
+            return
+        media_id = int(item.id)
+        self._main_content_usage_counts[media_id] = self._main_content_usage_counts.get(media_id, 0) + 1
+        self._main_content_used_ids.add(media_id)
+        self._main_content_used_by_day.setdefault(moment.date(), set()).add(media_id)
+        self._last_main_content_id = media_id
 
     def _choose_series_rotation_item(
         self,
@@ -290,8 +371,8 @@ class ScheduleBuilder:
             remaining = max(0.0, (block_end - start_at).total_seconds())
             fitting = [item for item in block_candidates if item.duration_seconds <= remaining]
             if fitting:
-                return max(fitting, key=lambda item: (item.duration_seconds, item.title.lower(), int(item.id or 0)))
-            return min(block_candidates, key=lambda item: (item.duration_seconds, item.title.lower(), int(item.id or 0)))
+                return self._select_main_content(fitting, moment=start_at, preferred_item=preferred_item) or max(fitting, key=lambda item: (item.duration_seconds, item.title.lower(), int(item.id or 0)))
+            return self._select_main_content(block_candidates, moment=start_at, preferred_item=preferred_item) or min(block_candidates, key=lambda item: (item.duration_seconds, item.title.lower(), int(item.id or 0)))
 
         next_block_info = _next_block_start_info(self._settings.program_blocks.blocks, start_at, target_end)
         if next_block_info is None:
@@ -306,7 +387,7 @@ class ScheduleBuilder:
         if not normal_candidates:
             return _first_matching_block_item(candidates, _block) or preferred_item
         pool = non_block_candidates or normal_candidates
-        return max(pool, key=lambda item: (item.duration_seconds, item.title.lower(), int(item.id or 0)))
+        return self._select_main_content(pool, moment=start_at, preferred_item=preferred_item) or max(pool, key=lambda item: (item.duration_seconds, item.title.lower(), int(item.id or 0)))
 
 
     def _choose_item_for_anchor_window(
@@ -336,7 +417,7 @@ class ScheduleBuilder:
             fitting = [item for item in anchor_candidates if item.duration_seconds <= gap_seconds]
         if not fitting:
             return preferred_item
-        return max(fitting, key=lambda item: (item.duration_seconds, item.title.lower(), int(item.id or 0)))
+        return self._select_main_content(fitting, moment=start_at, preferred_item=preferred_item) or max(fitting, key=lambda item: (item.duration_seconds, item.title.lower(), int(item.id or 0)))
 
     def _build_between_programme_fillers(
         self,
@@ -644,6 +725,47 @@ def _last_real_filler_id(entries: list[ScheduleEntry], countdown_item: MediaItem
         if entry.media_item_id != countdown_id:
             return entry.media_item_id
     return None
+
+
+def _is_repeat_guarded_main_item(item: MediaItem) -> bool:
+    return (
+        item.id is not None
+        and item.enabled
+        and item.duration_seconds >= MIN_NORMAL_PROGRAMME_DURATION_SECONDS
+        and item.source_kind != SourceKind.GENERATED
+        and item.media_type not in FILLER_MEDIA_TYPES
+        and item.media_type != "episode"
+    )
+
+
+def _main_content_allowed_by_repeat_guard(
+    item: MediaItem,
+    *,
+    used_in_pool: set[int],
+    used_today: set[int],
+    repeat_cycle_open: bool,
+    last_main_content_id: int | None,
+) -> bool:
+    media_id = int(item.id)
+    if media_id == last_main_content_id:
+        return False
+    if media_id in used_today:
+        return False
+    if not repeat_cycle_open and media_id in used_in_pool:
+        return False
+    return True
+
+
+def _best_main_content_candidate(items: list[MediaItem], usage_counts: dict[int, int]) -> MediaItem:
+    return min(
+        items,
+        key=lambda item: (
+            usage_counts.get(int(item.id), 0),
+            -float(item.duration_seconds),
+            item.title.casefold(),
+            int(item.id),
+        ),
+    )
 
 
 def _is_schedulable_normal_item(item: MediaItem) -> bool:

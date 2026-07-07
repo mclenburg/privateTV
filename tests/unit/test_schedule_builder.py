@@ -552,3 +552,30 @@ def test_schedule_builder_never_uses_tiny_normal_video_as_programme() -> None:
 
     assert result.entries
     assert {entry.media_item_id for entry in result.entries} == {2}
+
+
+def test_main_content_repeats_only_after_rotation_threshold() -> None:
+    settings = _settings(strategy="alphabetical")
+    zone = ZoneInfo("Europe/Berlin")
+    start = datetime(2026, 1, 15, 6, 0, tzinfo=zone)
+    end = start + timedelta(hours=8)
+    items = [_item(i, f"Movie {i:02d}", 3600) for i in range(1, 11)]
+
+    result = ScheduleBuilder(settings).build(items, start_at=start, end_at=end)
+
+    first_eight_ids = [entry.media_item_id for entry in result.entries[:8]]
+    assert len(first_eight_ids) == 8
+    assert len(set(first_eight_ids)) == 8
+
+
+def test_main_content_does_not_repeat_same_day_while_alternatives_exist() -> None:
+    settings = _settings(strategy="alphabetical")
+    zone = ZoneInfo("Europe/Berlin")
+    start = datetime(2026, 1, 15, 6, 0, tzinfo=zone)
+    end = start + timedelta(hours=3)
+    items = [_item(1, "Titanic", 3600), _item(2, "Aliens", 3600), _item(3, "Braveheart", 3600)]
+
+    result = ScheduleBuilder(settings).build(items, start_at=start, end_at=end)
+
+    ids_for_day = [entry.media_item_id for entry in result.entries if entry.start_time.date() == start.date()]
+    assert ids_for_day == [2, 3, 1]
